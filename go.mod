@@ -5,6 +5,7 @@ go 1.23
 require (
 	github.com/hashicorp/go-retryablehttp v0.7.8
 	github.com/redis/go-redis/v9 v9.17.0
+	github.com/spf13/cast v1.10.0
 	go.uber.org/zap v1.27.1
 )
 

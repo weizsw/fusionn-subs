@@ -1,6 +1,6 @@
 ARG GO_VERSION=1.23.2
 ARG PYTHON_IMAGE=python:3.11-slim
-ARG LLM_SUBTRANS_REPO=https://github.com/llm-subtrans/llm-subtrans.git
+ARG LLM_SUBTRANS_REPO=https://github.com/machinewrapped/llm-subtrans.git
 
 FROM golang:${GO_VERSION}-bookworm AS builder
 WORKDIR /workspace
@@ -12,6 +12,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/fusionn-subs ./cmd/worker
 
 FROM ${PYTHON_IMAGE} AS runtime
+ARG LLM_SUBTRANS_REPO
 ENV LLM_SUBTRANS_DIR=/opt/llm-subtrans \
     GEMINI_SCRIPT_PATH=/opt/llm-subtrans/gemini-subtrans.sh \
     GEMINI_WORKDIR=/opt/llm-subtrans

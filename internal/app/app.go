@@ -36,6 +36,8 @@ func New(cfg config.Config, logger *zap.Logger) (*App, error) {
 		WorkingDir:     cfg.GeminiWorkingDir,
 		APIKey:         cfg.GeminiAPIKey,
 		Model:          cfg.GeminiModel,
+		Instruction:    cfg.GeminiInstruction,
+		MaxBatchSize:   cfg.GeminiMaxBatchSize,
 		TargetLanguage: cfg.TargetLanguage,
 		OutputSuffix:   cfg.OutputSuffix,
 		Timeout:        cfg.ScriptTimeout,
