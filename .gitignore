@@ -1,0 +1,11 @@
+.idea/
+.vscode/
+bin/
+build/
+coverage.out
+dist/
+vendor/
+*.log
+*.local
+*.env
+
