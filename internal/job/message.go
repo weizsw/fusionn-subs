@@ -32,10 +32,16 @@ func (m Message) OutputPath(suffix string) string {
 		return m.Path
 	}
 
+	replacement := cleanSuffix
+	if dot := strings.Index(replacement, "."); dot != -1 {
+		replacement = replacement[:dot]
+	}
+
 	lowerPath := strings.ToLower(m.Path)
-	if strings.HasSuffix(lowerPath, ".eng.srt") {
-		trimmed := m.Path[:len(m.Path)-len(".eng.srt")]
-		return trimmed + "." + cleanSuffix
+	if idx := strings.LastIndex(lowerPath, ".eng"); idx != -1 {
+		prefix := m.Path[:idx+1]
+		suffixPart := m.Path[idx+4:]
+		return prefix + replacement + suffixPart
 	}
 
 	if strings.HasSuffix(lowerPath, ".srt") {
