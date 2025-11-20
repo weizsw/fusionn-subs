@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 
 	"github.com/fusionn-subs/internal/app"
@@ -26,6 +27,19 @@ func main() {
 	defer func(logger *zap.Logger) {
 		_ = logger.Sync()
 	}(logger)
+
+	cfgValues := cfg.SafeLogValues()
+	keys := make([]string, 0, len(cfgValues))
+	for k := range cfgValues {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		logger.Info("config",
+			zap.String("key", key),
+			zap.Any("value", cfgValues[key]),
+		)
+	}
 
 	appInstance, err := app.New(cfg, logger)
 	if err != nil {
