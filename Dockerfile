@@ -9,7 +9,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/fusionn-subs ./cmd/worker
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/fusionn-subs ./cmd/worker
 
 FROM ${PYTHON_IMAGE} AS runtime
 ARG LLM_SUBTRANS_REPO
