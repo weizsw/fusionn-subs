@@ -138,17 +138,13 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg job.Message) (stri
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		streamCmdOutput(stdoutPipe, &stdoutBuf, func(line string) {
-			t.logger.Info("gemini stdout", zap.String("line", line))
-		})
+		streamCmdOutput(stdoutPipe, &stdoutBuf, os.Stdout, nil)
 	}()
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		streamCmdOutput(stderrPipe, &stderrBuf, func(line string) {
-			t.logger.Warn("gemini stderr", zap.String("line", line))
-		})
+		streamCmdOutput(stderrPipe, &stderrBuf, os.Stderr, nil)
 	}()
 
 	if err := cmd.Start(); err != nil {
@@ -211,15 +207,20 @@ func shellQuote(arg string) string {
 	return strconv.Quote(arg)
 }
 
-func streamCmdOutput(r io.Reader, buf *bytes.Buffer, logLine func(string)) {
-	reader := bufio.NewReader(io.TeeReader(r, buf))
+func streamCmdOutput(r io.Reader, buf *bytes.Buffer, echo io.Writer, logLine func(string)) {
+	var writer io.Writer = buf
+	if echo != nil {
+		writer = io.MultiWriter(buf, echo)
+	}
+
+	reader := bufio.NewReader(io.TeeReader(r, writer))
 	for {
 		line, err := reader.ReadString('\n')
-		if line != "" {
+		if line != "" && logLine != nil {
 			logLine(strings.TrimRight(line, "\r\n"))
 		}
 		if err != nil {
-			if err != io.EOF {
+			if err != io.EOF && logLine != nil {
 				logLine(fmt.Sprintf("stream error: %v", err))
 			}
 			return

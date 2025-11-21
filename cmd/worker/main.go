@@ -11,6 +11,7 @@ import (
 	"github.com/fusionn-subs/internal/app"
 	"github.com/fusionn-subs/internal/config"
 	"github.com/fusionn-subs/internal/logging"
+	"github.com/fusionn-subs/internal/version"
 	"go.uber.org/zap"
 )
 
@@ -27,6 +28,8 @@ func main() {
 	defer func(logger *zap.Logger) {
 		_ = logger.Sync()
 	}(logger)
+
+	version.PrintBanner(nil)
 
 	cfgValues := cfg.SafeLogValues()
 	keys := make([]string, 0, len(cfgValues))
