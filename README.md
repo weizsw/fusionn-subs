@@ -4,31 +4,57 @@ Go worker that polls Redis for subtitle translation jobs, runs `gemini-subtrans.
 
 ## Quick start
 
+### Local Development
+
 ```bash
 make build
 make test
 docker compose up --build
 ```
 
+### Docker
+
+You can pull the pre-built image from Docker Hub or GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/weizsw/fusionn-subs:latest
+```
+
 ## Configuration
 
 All knobs are standard env vars (wired automatically in `docker-compose.yml`):
 
-- `REDIS_URL`, `REDIS_QUEUE` – BRPOP source (default queue `translate_queue`)
-- `CALLBACK_URL` – async merge endpoint to notify when translation finishes
-- `GEMINI_API_KEY`, `GEMINI_MODEL` – passed through to `gemini-subtrans.sh`
-- `TARGET_LANGUAGE` – fixed to `Chinese` by default
-- `OUTPUT_SUFFIX` – replaces `.eng.srt` with `.chs.srt`
-- `GEMINI_RATELIMIT` – per-minute cap for `--ratelimit` flag (default 8, safe for free Gemini 2.5 Flash usage)
-- `POLL_TIMEOUT`, `SCRIPT_TIMEOUT`, `HTTP_TIMEOUT`, `HTTP_MAX_RETRIES`, `LOG_LEVEL`
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_URL` | `redis://redis:6379/0` | Connection string for Redis |
+| `REDIS_QUEUE` | `translate_queue` | Redis List key to BRPOP jobs from |
+| `CALLBACK_URL` | | Endpoint to POST results to after translation |
+| `GEMINI_API_KEY` | | API Key for Gemini (Google AI Studio) |
+| `GEMINI_MODEL` | `gemini-2.5-flash` | Model ID to use |
+| `TARGET_LANGUAGE` | `zh` | Target language code |
+| `OUTPUT_SUFFIX` | `chs` | Suffix for output file (e.g., `.chs.srt`) |
+| `RATE_LIMIT` | `5` | Requests per minute (RPM) limit for Gemini |
+| `GEMINI_MAX_BATCH_SIZE` | `30` | Max lines per batch for translation |
+| `LOG_LEVEL` | `info` | Logging verbosity |
+| `PUID` / `PGID` | `501` / `20` | User/Group ID for file permissions |
+| `TZ` | `Asia/Shanghai` | Container timezone |
 
-## Docker workflow
+## Docker Workflow
+
+### Build & Run
 
 ```bash
 docker compose up --build
 ```
 
-Build stage compiles the Go worker, runtime stage runs `install.sh` from llm-subtrans so the generated `gemini-subtrans.sh` wrapper is identical to a manual setup.
+### CI/CD
 
-See `docs/` (coming soon) for architecture notes.
+The repository automatically builds and pushes Docker images to Docker Hub and GHCR on every release.
 
+## Architecture
+
+1. **Build Stage**: Compiles the Go worker binary.
+2. **Runtime Stage**:
+   - Installs Python runtime dependencies.
+   - Clones `llm-subtrans` and runs its `install.sh`.
+   - Runs the Go worker which wraps the `gemini-subtrans.sh` script.
