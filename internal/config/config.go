@@ -14,12 +14,19 @@ import (
 	"github.com/fusionn-subs/pkg/logger"
 )
 
+// Service-level defaults (not user-configurable)
+const (
+	DefaultCallbackTimeout    = 15 * time.Second
+	DefaultCallbackMaxRetries = 3
+	DefaultGeminiTimeout      = 15 * time.Minute
+	DefaultWorkerPollTimeout  = 5 * time.Second
+)
+
 type Config struct {
 	Redis      RedisConfig      `mapstructure:"redis"`
 	Callback   CallbackConfig   `mapstructure:"callback"`
 	Gemini     GeminiConfig     `mapstructure:"gemini"`
 	Translator TranslatorConfig `mapstructure:"translator"`
-	Worker     WorkerConfig     `mapstructure:"worker"`
 }
 
 type RedisConfig struct {
@@ -28,29 +35,20 @@ type RedisConfig struct {
 }
 
 type CallbackConfig struct {
-	URL        string        `mapstructure:"url"`
-	Timeout    time.Duration `mapstructure:"timeout"`
-	MaxRetries int           `mapstructure:"max_retries"`
+	URL string `mapstructure:"url"`
 }
 
 type GeminiConfig struct {
-	APIKey       string        `mapstructure:"api_key"`
-	Model        string        `mapstructure:"model"`
-	ScriptPath   string        `mapstructure:"script_path"`
-	WorkingDir   string        `mapstructure:"working_dir"`
-	Instruction  string        `mapstructure:"instruction"`
-	MaxBatchSize int           `mapstructure:"max_batch_size"`
-	RateLimit    int           `mapstructure:"rate_limit"`
-	Timeout      time.Duration `mapstructure:"timeout"`
+	APIKey       string `mapstructure:"api_key"`
+	Model        string `mapstructure:"model"`
+	Instruction  string `mapstructure:"instruction"`
+	MaxBatchSize int    `mapstructure:"max_batch_size"`
+	RateLimit    int    `mapstructure:"rate_limit"`
 }
 
 type TranslatorConfig struct {
 	TargetLanguage string `mapstructure:"target_language"`
 	OutputSuffix   string `mapstructure:"output_suffix"`
-}
-
-type WorkerConfig struct {
-	PollTimeout time.Duration `mapstructure:"poll_timeout"`
 }
 
 // ChangeCallback is called when config changes. Receives old and new config.
@@ -151,10 +149,6 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("callback.url is required")
 	case c.Gemini.APIKey == "":
 		return fmt.Errorf("gemini.api_key is required")
-	case c.Gemini.ScriptPath == "":
-		return fmt.Errorf("gemini.script_path is required")
-	case c.Gemini.WorkingDir == "":
-		return fmt.Errorf("gemini.working_dir is required")
 	}
 	return nil
 }
@@ -241,18 +235,12 @@ func (c *Config) SafeLogValues() map[string]any {
 		"redis.url":              c.Redis.URL,
 		"redis.queue":            c.Redis.Queue,
 		"callback.url":           c.Callback.URL,
-		"callback.timeout":       c.Callback.Timeout,
-		"callback.max_retries":   c.Callback.MaxRetries,
 		"gemini.api_key":         util.MaskSecret(c.Gemini.APIKey),
 		"gemini.model":           c.Gemini.Model,
-		"gemini.script_path":     c.Gemini.ScriptPath,
-		"gemini.working_dir":     c.Gemini.WorkingDir,
 		"gemini.instruction":     c.Gemini.Instruction,
 		"gemini.max_batch_size":  c.Gemini.MaxBatchSize,
 		"gemini.rate_limit":      c.Gemini.RateLimit,
-		"gemini.timeout":         c.Gemini.Timeout,
 		"translator.target_lang": c.Translator.TargetLanguage,
 		"translator.suffix":      c.Translator.OutputSuffix,
-		"worker.poll_timeout":    c.Worker.PollTimeout,
 	}
 }

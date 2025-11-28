@@ -12,8 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
+	"github.com/fusionn-subs/internal/config"
 	"github.com/fusionn-subs/internal/types"
 	"github.com/fusionn-subs/internal/util"
 	"github.com/fusionn-subs/pkg/logger"
@@ -36,37 +36,41 @@ type GeminiTranslator struct {
 	model          string
 	instruction    string
 	maxBatchSize   int
+	rateLimit      int
 	targetLanguage string
 	outputSuffix   string
-	timeout        time.Duration
-	rateLimit      int
 }
 
 type Config struct {
-	ScriptPath     string
-	WorkingDir     string
 	APIKey         string
 	Model          string
 	Instruction    string
 	MaxBatchSize   int
+	RateLimit      int
 	TargetLanguage string
 	OutputSuffix   string
-	Timeout        time.Duration
-	RateLimit      int
 }
 
 func NewGeminiTranslator(cfg Config) *GeminiTranslator {
+	scriptPath := os.Getenv("GEMINI_SCRIPT_PATH")
+	if scriptPath == "" {
+		scriptPath = "/opt/llm-subtrans/gemini-subtrans.sh"
+	}
+	workDir := os.Getenv("GEMINI_WORKDIR")
+	if workDir == "" {
+		workDir = "/opt/llm-subtrans"
+	}
+
 	return &GeminiTranslator{
-		scriptPath:     cfg.ScriptPath,
-		workDir:        cfg.WorkingDir,
+		scriptPath:     scriptPath,
+		workDir:        workDir,
 		apiKey:         cfg.APIKey,
 		model:          cfg.Model,
 		instruction:    cfg.Instruction,
 		maxBatchSize:   cfg.MaxBatchSize,
+		rateLimit:      cfg.RateLimit,
 		targetLanguage: cfg.TargetLanguage,
 		outputSuffix:   cfg.OutputSuffix,
-		timeout:        cfg.Timeout,
-		rateLimit:      cfg.RateLimit,
 	}
 }
 
@@ -77,12 +81,10 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) 
 
 	outputPath := msg.OutputPath(t.outputSuffix)
 
-	ctxTimeout, cancel := context.WithTimeout(ctx, t.timeout)
+	ctxTimeout, cancel := context.WithTimeout(ctx, config.DefaultGeminiTimeout)
 	defer cancel()
 
 	// Build args
-	// Note: API key passed via -k is visible in process list (ps).
-	// Also set via env var for scripts that support it.
 	args := []string{
 		msg.Path,
 		"-o", outputPath,
