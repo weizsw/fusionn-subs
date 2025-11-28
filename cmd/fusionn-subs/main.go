@@ -93,7 +93,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Run worker (blocks until context cancelled)
+	// Run worker (blocks until context canceled)
 	err = workerSvc.Run(ctx)
 
 	fmt.Println()
