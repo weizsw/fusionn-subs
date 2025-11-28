@@ -45,25 +45,17 @@ redis:
 
 callback:
   url: "http://localhost:4664/api/v1/async_merge"
-  timeout: 15s
-  max_retries: 3
 
 gemini:
-  api_key: ""  # Set via FUSIONN_SUBS_GEMINI_API_KEY
+  api_key: ""                       # REQUIRED - or set via FUSIONN_SUBS_GEMINI_API_KEY
   model: "gemini-2.5-flash-latest"
-  script_path: "/opt/llm-subtrans/gemini-subtrans.sh"
-  working_dir: "/opt/llm-subtrans"
-  instruction: ""
-  max_batch_size: 20
-  rate_limit: 8
-  timeout: 15m
+  instruction: ""                   # Custom translation instruction (optional)
+  max_batch_size: 20                # Tune for performance
+  rate_limit: 8                     # Depends on your Gemini plan
 
 translator:
   target_language: "Chinese"
   output_suffix: "chs"
-
-worker:
-  poll_timeout: 5s
 ```
 
 ### Environment Variables
