@@ -8,18 +8,25 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"go.uber.org/zap"
+	"github.com/fusionn-subs/internal/types"
+	"github.com/fusionn-subs/internal/util"
+	"github.com/fusionn-subs/pkg/logger"
+)
 
-	"github.com/fusionn-subs/internal/job"
+// ANSI escape codes for dimmed output (like Docker build logs)
+const (
+	dimStart = "\033[2m"
+	dimEnd   = "\033[0m"
 )
 
 type Translator interface {
-	Translate(ctx context.Context, msg job.Message) (string, error)
+	Translate(ctx context.Context, msg types.JobMessage) (string, error)
 }
 
 type GeminiTranslator struct {
@@ -33,10 +40,9 @@ type GeminiTranslator struct {
 	outputSuffix   string
 	timeout        time.Duration
 	rateLimit      int
-	logger         *zap.Logger
 }
 
-type GeminiConfig struct {
+type Config struct {
 	ScriptPath     string
 	WorkingDir     string
 	APIKey         string
@@ -47,14 +53,9 @@ type GeminiConfig struct {
 	OutputSuffix   string
 	Timeout        time.Duration
 	RateLimit      int
-	Logger         *zap.Logger
 }
 
-func NewGeminiTranslator(cfg GeminiConfig) *GeminiTranslator {
-	logger := cfg.Logger
-	if logger == nil {
-		logger = zap.NewNop()
-	}
+func NewGeminiTranslator(cfg Config) *GeminiTranslator {
 	return &GeminiTranslator{
 		scriptPath:     cfg.ScriptPath,
 		workDir:        cfg.WorkingDir,
@@ -66,13 +67,12 @@ func NewGeminiTranslator(cfg GeminiConfig) *GeminiTranslator {
 		outputSuffix:   cfg.OutputSuffix,
 		timeout:        cfg.Timeout,
 		rateLimit:      cfg.RateLimit,
-		logger:         logger,
 	}
 }
 
-func (t *GeminiTranslator) Translate(ctx context.Context, msg job.Message) (string, error) {
+func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) (string, error) {
 	if err := msg.Validate(); err != nil {
-		return "", err
+		return "", fmt.Errorf("invalid message: %w", err)
 	}
 
 	outputPath := msg.OutputPath(t.outputSuffix)
@@ -80,6 +80,9 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg job.Message) (stri
 	ctxTimeout, cancel := context.WithTimeout(ctx, t.timeout)
 	defer cancel()
 
+	// Build args
+	// Note: API key passed via -k is visible in process list (ps).
+	// Also set via env var for scripts that support it.
 	args := []string{
 		msg.Path,
 		"-o", outputPath,
@@ -112,16 +115,11 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg job.Message) (stri
 		cmd.Dir = t.workDir
 	}
 
-	cmd.Env = append(os.Environ(), fmt.Sprintf("GEMINI_API_KEY=%s", t.apiKey))
+	// Pass API key via environment only (security: not visible in process list)
+	cmd.Env = append(os.Environ(), "GEMINI_API_KEY="+t.apiKey)
 
-	commandLine := buildCommandLine(t.scriptPath, args)
-
-	t.logger.Info("starting gemini translation",
-		zap.String("input", msg.Path),
-		zap.String("output", outputPath),
-		zap.String("model", t.model),
-		zap.String("command", commandLine),
-	)
+	logger.Infof("🔄 Starting translation: %s → %s", msg.Path, outputPath)
+	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -135,63 +133,56 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg job.Message) (stri
 	var stdoutBuf, stderrBuf bytes.Buffer
 	var wg sync.WaitGroup
 
-	wg.Add(1)
+	// Stream output in dim/grey (like Docker build logs)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		streamCmdOutput(stdoutPipe, &stdoutBuf, os.Stdout, nil)
+		streamDimmed(stdoutPipe, &stdoutBuf)
 	}()
-
-	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		streamCmdOutput(stderrPipe, &stderrBuf, os.Stderr, nil)
+		streamDimmed(stderrPipe, &stderrBuf)
 	}()
 
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start gemini translator: %w", err)
+		return "", fmt.Errorf("start script: %w", err)
 	}
 
-	err = cmd.Wait()
 	wg.Wait()
+	err = cmd.Wait()
 
 	stdoutStr := strings.TrimSpace(stdoutBuf.String())
 	stderrStr := strings.TrimSpace(stderrBuf.String())
 
-	logFields := []zap.Field{
-		zap.String("stdout", stdoutStr),
-		zap.String("stderr", stderrStr),
-	}
-
 	if err != nil {
-		t.logger.Error("gemini translator failed", append(logFields, zap.Error(err))...)
-		return "", fmt.Errorf("gemini translator failed: %w: %s", err, stderrStr)
+		logger.Errorf("Translation failed: %v", err)
+		if stderrStr != "" {
+			logger.Errorf("Script stderr: %s", stderrStr)
+		}
+		return "", fmt.Errorf("script failed: %w", err)
 	}
 
-	if _, err := os.Stat(outputPath); err != nil {
-		t.logger.Error("gemini translator missing output", append(logFields, zap.Error(err))...)
-		return "", fmt.Errorf("output not found: %w", err)
+	if _, statErr := os.Stat(outputPath); statErr != nil {
+		logger.Errorf("Output file not found after script completed")
+		return "", fmt.Errorf("output not found: %w", statErr)
 	}
 
-	if reason, ok := detectScriptFailure(stdoutStr, stderrStr); ok {
-		err := fmt.Errorf("script reported failure: %s", reason)
-		t.logger.Error("gemini translator reported failure", append(logFields, zap.Error(err))...)
-		return "", err
+	if reason, failed := detectScriptFailure(stdoutStr, stderrStr); failed {
+		logger.Errorf("Script failure detected: %s", reason)
+		return "", fmt.Errorf("script reported failure: %s", reason)
 	}
 
-	t.logger.Info("translation completed",
-		append(logFields, zap.String("output", outputPath))...,
-	)
-
+	logger.Infof("✅ Translation completed: %s", outputPath)
 	return outputPath, nil
 }
 
 func buildCommandLine(cmd string, args []string) string {
+	// Pre-allocate capacity
 	parts := make([]string, 0, len(args)+1)
 	parts = append(parts, shellQuote(cmd))
 	for _, arg := range args {
 		parts = append(parts, shellQuote(arg))
 	}
-
 	return strings.Join(parts, " ")
 }
 
@@ -199,32 +190,42 @@ func shellQuote(arg string) string {
 	if arg == "" {
 		return "''"
 	}
-
 	if !strings.ContainsAny(arg, " \t\n\"'\\") {
 		return arg
 	}
-
 	return strconv.Quote(arg)
 }
 
-func streamCmdOutput(r io.Reader, buf *bytes.Buffer, echo io.Writer, logLine func(string)) {
-	var writer io.Writer = buf
-	if echo != nil {
-		writer = io.MultiWriter(buf, echo)
+var apiKeyPattern = regexp.MustCompile(`(-k\s+)(\S+)`)
+
+// maskAPIKeyInCommand replaces -k value with masked version for logging
+func maskAPIKeyInCommand(cmd string) string {
+	return apiKeyPattern.ReplaceAllStringFunc(cmd, func(match string) string {
+		parts := apiKeyPattern.FindStringSubmatch(match)
+		if len(parts) == 3 {
+			return parts[1] + util.MaskSecret(parts[2])
+		}
+		return match
+	})
+}
+
+// streamDimmed reads from r, writes to buf for capture, and prints dimmed to stderr.
+// This creates a Docker-build-like experience where script output is visible but greyed out.
+func streamDimmed(r io.Reader, buf *bytes.Buffer) {
+	scanner := bufio.NewScanner(r)
+	// Increase buffer for potentially long lines
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		buf.WriteString(line)
+		buf.WriteByte('\n')
+		// Print dimmed to stderr (doesn't interfere with structured logs)
+		fmt.Fprintf(os.Stderr, "%s  │ %s%s\n", dimStart, line, dimEnd)
 	}
 
-	reader := bufio.NewReader(io.TeeReader(r, writer))
-	for {
-		line, err := reader.ReadString('\n')
-		if line != "" && logLine != nil {
-			logLine(strings.TrimRight(line, "\r\n"))
-		}
-		if err != nil {
-			if err != io.EOF && logLine != nil {
-				logLine(fmt.Sprintf("stream error: %v", err))
-			}
-			return
-		}
+	if err := scanner.Err(); err != nil {
+		logger.Debugf("Scanner error (may be normal): %v", err)
 	}
 }
 
@@ -235,18 +236,13 @@ func detectScriptFailure(stdoutStr, stderrStr string) (string, bool) {
 		"failed to communicate with provider",
 		"saving partial results",
 		"traceback (most recent call last)",
-		"error:",
 	}
 
 	combined := strings.ToLower(stdoutStr + "\n" + stderrStr)
 	for _, indicator := range fatalIndicators {
-		if indicator == "" {
-			continue
-		}
 		if strings.Contains(combined, indicator) {
 			return indicator, true
 		}
 	}
-
 	return "", false
 }

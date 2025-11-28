@@ -1,11 +1,46 @@
+# Binaries
+/fusionn-subs
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output
+*.out
+*.log
+coverage.out
+
+# Dependency directories
+vendor/
+
+# IDE
 .idea/
 .vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config with secrets (keep config.example.yaml tracked)
+config/config.yaml
+config/config.local.yaml
+config/*.local.yaml
+
+# Data directory
+data/
+.cursor/
+
+# Build
+dist/
 bin/
 build/
-coverage.out
-dist/
-vendor/
-*.log
+
+# Env files
 *.local
 *.env
-
