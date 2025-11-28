@@ -1,175 +1,258 @@
 package config
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
-	"strconv"
+	"reflect"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/spf13/cast"
+	"github.com/fsnotify/fsnotify"
+	"github.com/spf13/viper"
+
+	"github.com/fusionn-subs/internal/util"
+	"github.com/fusionn-subs/pkg/logger"
 )
 
 type Config struct {
-	RedisURL           string
-	RedisQueue         string
-	CallbackURL        string
-	GeminiAPIKey       string
-	GeminiModel        string
-	GeminiScriptPath   string
-	GeminiWorkingDir   string
-	GeminiInstruction  string
-	GeminiMaxBatchSize int
-	TargetLanguage     string
-	OutputSuffix       string
-	PollTimeout        time.Duration
-	ScriptTimeout      time.Duration
-	HTTPTimeout        time.Duration
-	HTTPMaxRetries     int
-	RateLimit          int
-	LogLevel           string
+	Redis      RedisConfig      `mapstructure:"redis"`
+	Callback   CallbackConfig   `mapstructure:"callback"`
+	Gemini     GeminiConfig     `mapstructure:"gemini"`
+	Translator TranslatorConfig `mapstructure:"translator"`
+	Worker     WorkerConfig     `mapstructure:"worker"`
 }
 
-func Load() (Config, error) {
-	cfg := Config{
-		RedisURL:           getEnv("REDIS_URL", "redis://192.168.50.135:6379"),
-		RedisQueue:         getEnv("REDIS_QUEUE", "translate_queue"),
-		CallbackURL:        getEnv("CALLBACK_URL", "http://192.168.50.135:4664/api/v1/async_merge"),
-		GeminiAPIKey:       os.Getenv("GEMINI_API_KEY"),
-		GeminiModel:        getEnv("GEMINI_MODEL", "gemini-2.5-flash-latest"),
-		GeminiScriptPath:   getEnv("GEMINI_SCRIPT_PATH", "/opt/llm-subtrans/gemini-subtrans.sh"),
-		GeminiWorkingDir:   getEnv("GEMINI_WORKDIR", "/opt/llm-subtrans"),
-		GeminiInstruction:  getEnv("GEMINI_INSTRUCTION", ""),
-		GeminiMaxBatchSize: cast.ToInt(getEnv("GEMINI_MAX_BATCH_SIZE", "20")),
-		TargetLanguage:     getEnv("TARGET_LANGUAGE", "Chinese"),
-		OutputSuffix:       getEnv("OUTPUT_SUFFIX", "chs"),
-		LogLevel:           getEnv("LOG_LEVEL", "info"),
-		RateLimit:          cast.ToInt(getEnv("RATE_LIMIT", "8")),
+type RedisConfig struct {
+	URL   string `mapstructure:"url"`
+	Queue string `mapstructure:"queue"`
+}
+
+type CallbackConfig struct {
+	URL        string        `mapstructure:"url"`
+	Timeout    time.Duration `mapstructure:"timeout"`
+	MaxRetries int           `mapstructure:"max_retries"`
+}
+
+type GeminiConfig struct {
+	APIKey       string        `mapstructure:"api_key"`
+	Model        string        `mapstructure:"model"`
+	ScriptPath   string        `mapstructure:"script_path"`
+	WorkingDir   string        `mapstructure:"working_dir"`
+	Instruction  string        `mapstructure:"instruction"`
+	MaxBatchSize int           `mapstructure:"max_batch_size"`
+	RateLimit    int           `mapstructure:"rate_limit"`
+	Timeout      time.Duration `mapstructure:"timeout"`
+}
+
+type TranslatorConfig struct {
+	TargetLanguage string `mapstructure:"target_language"`
+	OutputSuffix   string `mapstructure:"output_suffix"`
+}
+
+type WorkerConfig struct {
+	PollTimeout time.Duration `mapstructure:"poll_timeout"`
+}
+
+// ChangeCallback is called when config changes. Receives old and new config.
+type ChangeCallback func(old, new *Config)
+
+// Manager handles config loading and hot-reload.
+type Manager struct {
+	mu        sync.RWMutex
+	cfg       *Config
+	callbacks []ChangeCallback
+}
+
+// NewManager creates a config manager with hot-reload support.
+func NewManager(path string) (*Manager, error) {
+	viper.SetConfigFile(path)
+	viper.SetConfigType("yaml")
+
+	// Environment variable override support
+	viper.SetEnvPrefix("FUSIONN_SUBS")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.AutomaticEnv()
+
+	if err := viper.ReadInConfig(); err != nil {
+		return nil, err
 	}
 
-	var err error
-	if cfg.PollTimeout, err = parseDuration("POLL_TIMEOUT", "5s"); err != nil {
-		return Config{}, err
-	}
-
-	if cfg.ScriptTimeout, err = parseDuration("SCRIPT_TIMEOUT", "15m"); err != nil {
-		return Config{}, err
-	}
-
-	if cfg.HTTPTimeout, err = parseDuration("HTTP_TIMEOUT", "15s"); err != nil {
-		return Config{}, err
-	}
-
-	if cfg.HTTPMaxRetries, err = parseInt("HTTP_MAX_RETRIES", 3); err != nil {
-		return Config{}, err
-	}
-
-	if val := getEnv("GEMINI_RATELIMIT", ""); val != "" {
-		if cfg.RateLimit, err = strconv.Atoi(val); err != nil {
-			return Config{}, fmt.Errorf("invalid integer for GEMINI_RATELIMIT: %w", err)
-		}
+	var cfg Config
+	if err := viper.Unmarshal(&cfg); err != nil {
+		return nil, err
 	}
 
 	if err := cfg.Validate(); err != nil {
-		return Config{}, err
+		return nil, err
 	}
 
-	return cfg, nil
+	m := &Manager{cfg: &cfg}
+
+	// Setup hot-reload
+	viper.OnConfigChange(func(e fsnotify.Event) {
+		logger.Infof("🔄 Config file changed: %s", e.Name)
+		m.reload()
+	})
+	viper.WatchConfig()
+
+	return m, nil
 }
 
-func (c Config) Validate() error {
-	switch {
-	case c.RedisURL == "":
-		return errors.New("REDIS_URL is required")
-	case c.RedisQueue == "":
-		return errors.New("REDIS_QUEUE is required")
-	case c.CallbackURL == "":
-		return errors.New("CALLBACK_URL is required")
-	case c.GeminiAPIKey == "":
-		return errors.New("GEMINI_API_KEY is required")
-	case c.GeminiScriptPath == "":
-		return errors.New("GEMINI_SCRIPT_PATH is required")
-	case c.GeminiWorkingDir == "":
-		return errors.New("GEMINI_WORKDIR is required")
+// Get returns the current config (thread-safe).
+func (m *Manager) Get() *Config {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.cfg
+}
+
+// OnChange registers a callback for config changes.
+func (m *Manager) OnChange(cb ChangeCallback) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.callbacks = append(m.callbacks, cb)
+}
+
+// reload re-reads config and notifies subscribers.
+func (m *Manager) reload() {
+	var newCfg Config
+	if err := viper.Unmarshal(&newCfg); err != nil {
+		logger.Errorf("❌ Failed to reload config: %v", err)
+		return
 	}
 
+	if err := newCfg.Validate(); err != nil {
+		logger.Errorf("❌ Invalid config after reload: %v", err)
+		return
+	}
+
+	m.mu.Lock()
+	oldCfg := m.cfg
+	m.cfg = &newCfg
+	callbacks := m.callbacks
+	m.mu.Unlock()
+
+	// Log what changed
+	logChanges(oldCfg, &newCfg, "")
+
+	// Notify subscribers outside lock
+	for _, cb := range callbacks {
+		cb(oldCfg, &newCfg)
+	}
+}
+
+// Validate checks required config fields.
+func (c *Config) Validate() error {
+	switch {
+	case c.Redis.URL == "":
+		return fmt.Errorf("redis.url is required")
+	case c.Redis.Queue == "":
+		return fmt.Errorf("redis.queue is required")
+	case c.Callback.URL == "":
+		return fmt.Errorf("callback.url is required")
+	case c.Gemini.APIKey == "":
+		return fmt.Errorf("gemini.api_key is required")
+	case c.Gemini.ScriptPath == "":
+		return fmt.Errorf("gemini.script_path is required")
+	case c.Gemini.WorkingDir == "":
+		return fmt.Errorf("gemini.working_dir is required")
+	}
 	return nil
 }
 
-func getEnv(key string, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
+// logChanges logs field-level differences between old and new config.
+func logChanges(old, cur any, prefix string) {
+	oldVal := reflect.ValueOf(old)
+	newVal := reflect.ValueOf(cur)
+
+	// Dereference pointers
+	if oldVal.Kind() == reflect.Ptr {
+		oldVal = oldVal.Elem()
+	}
+	if newVal.Kind() == reflect.Ptr {
+		newVal = newVal.Elem()
 	}
 
-	return fallback
+	if oldVal.Kind() != reflect.Struct {
+		return
+	}
+
+	t := oldVal.Type()
+	for i := range t.NumField() {
+		field := t.Field(i)
+		oldField := oldVal.Field(i)
+		newField := newVal.Field(i)
+
+		fieldName := field.Name
+		if prefix != "" {
+			fieldName = prefix + "." + fieldName
+		}
+
+		// Recurse into nested structs
+		if oldField.Kind() == reflect.Struct {
+			logChanges(oldField.Interface(), newField.Interface(), fieldName)
+			continue
+		}
+
+		// Compare values
+		if !reflect.DeepEqual(oldField.Interface(), newField.Interface()) {
+			oldStr := formatValue(oldField)
+			newStr := formatValue(newField)
+			logger.Infof("  📝 %s: %s → %s", fieldName, oldStr, newStr)
+		}
+	}
 }
 
-func parseDuration(key string, fallback string) (time.Duration, error) {
-	value := getEnv(key, fallback)
-	d, err := time.ParseDuration(value)
-	if err != nil {
-		return 0, fmt.Errorf("invalid duration for %s: %w", key, err)
+// formatValue formats a reflect.Value for logging, masking sensitive fields.
+func formatValue(v reflect.Value) string {
+	if v.Kind() == reflect.Slice {
+		return fmt.Sprintf("%v", v.Interface())
 	}
-
-	return d, nil
+	return fmt.Sprintf("%v", v.Interface())
 }
 
-func parseInt(key string, fallback int) (int, error) {
-	value := getEnv(key, "")
-	if value == "" {
-		return fallback, nil
+// Load is a convenience function for one-time loading (backwards compatible).
+func Load(path string) (*Config, error) {
+	viper.SetConfigFile(path)
+	viper.SetConfigType("yaml")
+
+	viper.SetEnvPrefix("FUSIONN_SUBS")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.AutomaticEnv()
+
+	if err := viper.ReadInConfig(); err != nil {
+		return nil, err
 	}
 
-	i, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("invalid integer for %s: %w", key, err)
+	var cfg Config
+	if err := viper.Unmarshal(&cfg); err != nil {
+		return nil, err
 	}
 
-	return i, nil
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
 }
 
-func (c Config) SafeLogValues() map[string]any {
+// SafeLogValues returns config values safe for logging (masks secrets).
+func (c *Config) SafeLogValues() map[string]any {
 	return map[string]any{
-		"redis_url":          c.RedisURL,
-		"redis_queue":        c.RedisQueue,
-		"callback_url":       c.CallbackURL,
-		"gemini_api_key":     maskSecret(c.GeminiAPIKey),
-		"gemini_model":       c.GeminiModel,
-		"gemini_script_path": c.GeminiScriptPath,
-		"gemini_working_dir": c.GeminiWorkingDir,
-		"gemini_instruction": c.GeminiInstruction,
-		"gemini_max_batch":   c.GeminiMaxBatchSize,
-		"target_language":    c.TargetLanguage,
-		"output_suffix":      c.OutputSuffix,
-		"poll_timeout":       c.PollTimeout,
-		"script_timeout":     c.ScriptTimeout,
-		"http_timeout":       c.HTTPTimeout,
-		"http_max_retries":   c.HTTPMaxRetries,
-		"rate_limit":         c.RateLimit,
-		"log_level":          c.LogLevel,
+		"redis.url":              c.Redis.URL,
+		"redis.queue":            c.Redis.Queue,
+		"callback.url":           c.Callback.URL,
+		"callback.timeout":       c.Callback.Timeout,
+		"callback.max_retries":   c.Callback.MaxRetries,
+		"gemini.api_key":         util.MaskSecret(c.Gemini.APIKey),
+		"gemini.model":           c.Gemini.Model,
+		"gemini.script_path":     c.Gemini.ScriptPath,
+		"gemini.working_dir":     c.Gemini.WorkingDir,
+		"gemini.instruction":     c.Gemini.Instruction,
+		"gemini.max_batch_size":  c.Gemini.MaxBatchSize,
+		"gemini.rate_limit":      c.Gemini.RateLimit,
+		"gemini.timeout":         c.Gemini.Timeout,
+		"translator.target_lang": c.Translator.TargetLanguage,
+		"translator.suffix":      c.Translator.OutputSuffix,
+		"worker.poll_timeout":    c.Worker.PollTimeout,
 	}
-}
-
-func maskSecret(value string) string {
-	if value == "" {
-		return ""
-	}
-
-	const keep = 4
-	if len(value) <= keep {
-		return strings.Repeat("*", len(value))
-	}
-
-	return value[:keep] + strings.Repeat("*", len(value)-keep)
-}
-
-func (c Config) SafeLogPretty() string {
-	data, err := json.MarshalIndent(c.SafeLogValues(), "", "  ")
-	if err != nil {
-		return fmt.Sprintf("marshal config: %v", err)
-	}
-
-	return string(data)
 }

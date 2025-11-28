@@ -1,0 +1,50 @@
+# ════════════════════════════════════════════════════════════════════════════
+# FUSIONN-SUBS CONFIGURATION
+# ════════════════════════════════════════════════════════════════════════════
+# Copy this file to config.yaml and fill in your settings.
+#
+# Environment variables can override any config value using the format:
+# FUSIONN_SUBS_<SECTION>_<KEY> (e.g., FUSIONN_SUBS_GEMINI_API_KEY)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REDIS - Message queue for translation jobs
+# ─────────────────────────────────────────────────────────────────────────────
+redis:
+  url: "redis://localhost:6379"    # Redis connection URL
+  queue: "translate_queue"          # Queue name to consume from
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CALLBACK - Where to send completed translations
+# ─────────────────────────────────────────────────────────────────────────────
+callback:
+  url: "http://localhost:4664/api/v1/async_merge"  # Endpoint for callback
+  timeout: 15s                                      # HTTP request timeout
+  max_retries: 3                                    # Number of retry attempts
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GEMINI - AI Translation Provider
+# ─────────────────────────────────────────────────────────────────────────────
+# Get API key from: https://aistudio.google.com/apikey
+gemini:
+  api_key: ""                                        # REQUIRED - Gemini API key
+  model: "gemini-2.5-flash-latest"                   # Model to use
+  script_path: "/opt/llm-subtrans/gemini-subtrans.sh" # Path to translator script
+  working_dir: "/opt/llm-subtrans"                   # Script working directory
+  instruction: ""                                    # Custom instruction (optional)
+  max_batch_size: 20                                 # Max subtitles per batch
+  rate_limit: 8                                      # Requests per minute
+  timeout: 15m                                       # Script execution timeout
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRANSLATOR - Output settings
+# ─────────────────────────────────────────────────────────────────────────────
+translator:
+  target_language: "Chinese"  # Target translation language
+  output_suffix: "chs"        # Suffix for translated file (e.g., movie.chs.srt)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WORKER - Processing settings
+# ─────────────────────────────────────────────────────────────────────────────
+worker:
+  poll_timeout: 5s  # How long to wait for new jobs from Redis
+

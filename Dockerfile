@@ -1,33 +1,37 @@
-ARG GO_VERSION=1.23.2
-ARG PYTHON_IMAGE=python:3.11-slim
-ARG LLM_SUBTRANS_REPO=https://github.com/machinewrapped/llm-subtrans.git
+# Build stage
+FROM golang:1.23-alpine AS builder
 
-FROM golang:${GO_VERSION}-bookworm AS builder
-WORKDIR /workspace
+WORKDIR /app
 
+# Install git for version info
+RUN apk add --no-cache git
+
+# Copy go mod files
 COPY go.mod go.sum ./
 RUN go mod download
 
+# Copy source
 COPY . .
-ARG TARGETOS TARGETARCH
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/fusionn-subs ./cmd/worker
 
-FROM ${PYTHON_IMAGE} AS runtime
-ARG LLM_SUBTRANS_REPO
-ENV LLM_SUBTRANS_DIR=/opt/llm-subtrans \
-    GEMINI_SCRIPT_PATH=/opt/llm-subtrans/gemini-subtrans.sh \
-    GEMINI_WORKDIR=/opt/llm-subtrans
+# Build with version info
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags "-s -w -X github.com/fusionn-subs/internal/version.Version=${VERSION}" \
+    -o fusionn-subs ./cmd/fusionn-subs
 
-RUN apt-get update && apt-get install -y --no-install-recommends git build-essential && rm -rf /var/lib/apt/lists/*
+# Runtime stage
+FROM alpine:3.19
 
-RUN git clone --depth 1 ${LLM_SUBTRANS_REPO} ${LLM_SUBTRANS_DIR}
-
-WORKDIR ${LLM_SUBTRANS_DIR}
-
-RUN set -e; printf "2\n\n2\n\n" | ./install.sh
+RUN apk add --no-cache ca-certificates tzdata
 
 WORKDIR /app
-COPY --from=builder /out/fusionn-subs /usr/local/bin/fusionn-subs
 
-ENTRYPOINT ["/usr/local/bin/fusionn-subs"]
+COPY --from=builder /app/fusionn-subs .
 
+# Create config directory
+RUN mkdir -p /app/config
+
+ENV ENV=production
+ENV CONFIG_PATH=/app/config/config.yaml
+
+ENTRYPOINT ["/app/fusionn-subs"]
