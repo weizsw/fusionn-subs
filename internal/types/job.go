@@ -1,4 +1,4 @@
-package job
+package types
 
 import (
 	"errors"
@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-type Message struct {
+type JobMessage struct {
 	FileName  string `json:"file_name"`
 	Path      string `json:"path"`
 	VideoPath string `json:"video_path"`
@@ -14,7 +14,7 @@ type Message struct {
 	Provider  string `json:"provider"`
 }
 
-func (m Message) Validate() error {
+func (m JobMessage) Validate() error {
 	if strings.TrimSpace(m.Path) == "" {
 		return errors.New("message.path is required")
 	}
@@ -22,7 +22,7 @@ func (m Message) Validate() error {
 	return nil
 }
 
-func (m Message) OutputPath(suffix string) string {
+func (m JobMessage) OutputPath(suffix string) string {
 	if suffix == "" {
 		return m.Path
 	}
