@@ -63,25 +63,22 @@ func run() error {
 
 	// Initialize services
 	translatorSvc := translator.NewGeminiTranslator(translator.Config{
-		ScriptPath:     cfg.Gemini.ScriptPath,
-		WorkingDir:     cfg.Gemini.WorkingDir,
 		APIKey:         cfg.Gemini.APIKey,
 		Model:          cfg.Gemini.Model,
 		Instruction:    cfg.Gemini.Instruction,
 		MaxBatchSize:   cfg.Gemini.MaxBatchSize,
+		RateLimit:      cfg.Gemini.RateLimit,
 		TargetLanguage: cfg.Translator.TargetLanguage,
 		OutputSuffix:   cfg.Translator.OutputSuffix,
-		Timeout:        cfg.Gemini.Timeout,
-		RateLimit:      cfg.Gemini.RateLimit,
 	})
 	logger.Infof("🤖 Translator: %s", cfg.Gemini.Model)
 
-	callbackClient := callback.NewClient(cfg.Callback.URL, cfg.Callback.Timeout, cfg.Callback.MaxRetries)
+	callbackClient := callback.NewClient(cfg.Callback.URL, config.DefaultCallbackTimeout, config.DefaultCallbackMaxRetries)
 	logger.Infof("📤 Callback: %s", cfg.Callback.URL)
 
 	workerSvc := worker.New(redisClient, worker.Config{
 		Queue:       cfg.Redis.Queue,
-		PollTimeout: cfg.Worker.PollTimeout,
+		PollTimeout: config.DefaultWorkerPollTimeout,
 	}, translatorSvc, callbackClient)
 
 	logger.Info("")

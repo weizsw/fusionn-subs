@@ -33,11 +33,11 @@ type Worker struct {
 	callback   *callback.Client
 }
 
-func New(redisClient *redis.Client, cfg Config, translator translator.Translator, callbackClient *callback.Client) *Worker {
+func New(redisClient *redis.Client, cfg Config, trans translator.Translator, callbackClient *callback.Client) *Worker {
 	return &Worker{
 		redis:      redisClient,
 		cfg:        cfg,
-		translator: translator,
+		translator: trans,
 		callback:   callbackClient,
 	}
 }
