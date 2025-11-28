@@ -2,12 +2,12 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 
 	"github.com/fusionn-subs/internal/util"
@@ -59,9 +59,15 @@ type Manager struct {
 	mu        sync.RWMutex
 	cfg       *Config
 	callbacks []ChangeCallback
+	stop      chan struct{}
+
+	// Polling state
+	path        string
+	lastModTime time.Time
 }
 
-// NewManager creates a config manager with hot-reload support.
+// NewManager creates a config manager with hot-reload support via polling.
+// Config changes are detected automatically every 10 seconds.
 func NewManager(path string) (*Manager, error) {
 	viper.SetConfigFile(path)
 	viper.SetConfigType("yaml")
@@ -84,14 +90,23 @@ func NewManager(path string) (*Manager, error) {
 		return nil, err
 	}
 
-	m := &Manager{cfg: &cfg}
+	// Get initial file mod time
+	var lastMod time.Time
+	if stat, err := os.Stat(path); err == nil {
+		lastMod = stat.ModTime()
+	}
 
-	// Setup hot-reload
-	viper.OnConfigChange(func(e fsnotify.Event) {
-		logger.Infof("🔄 Config file changed: %s", e.Name)
-		m.reload()
-	})
-	viper.WatchConfig()
+	m := &Manager{
+		cfg:         &cfg,
+		stop:        make(chan struct{}),
+		path:        path,
+		lastModTime: lastMod,
+	}
+
+	// Start polling for config changes
+	go m.pollForChanges(10 * time.Second)
+
+	logger.Infof("📋 Config loaded (polling every 10s for changes)")
 
 	return m, nil
 }
@@ -108,6 +123,48 @@ func (m *Manager) OnChange(cb ChangeCallback) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.callbacks = append(m.callbacks, cb)
+}
+
+// Stop stops the config polling goroutine.
+func (m *Manager) Stop() {
+	close(m.stop)
+}
+
+// pollForChanges checks file modtime periodically for Docker bind mount compatibility.
+func (m *Manager) pollForChanges(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.stop:
+			return
+		case <-ticker.C:
+			stat, err := os.Stat(m.path)
+			if err != nil {
+				continue
+			}
+
+			m.mu.RLock()
+			lastMod := m.lastModTime
+			m.mu.RUnlock()
+
+			if stat.ModTime().After(lastMod) {
+				logger.Infof("🔄 Config file changed, reloading...")
+
+				if err := viper.ReadInConfig(); err != nil {
+					logger.Errorf("❌ Failed to re-read config: %v", err)
+					continue
+				}
+
+				m.mu.Lock()
+				m.lastModTime = stat.ModTime()
+				m.mu.Unlock()
+
+				m.reload()
+			}
+		}
+	}
 }
 
 // reload re-reads config and notifies subscribers.
