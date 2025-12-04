@@ -2,7 +2,6 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
     branches: [main]
 
@@ -83,12 +82,11 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          # Only push on main branch, not PRs
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          # Push on any branch, not PRs
+          push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
