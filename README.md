@@ -153,7 +153,3 @@ make build
 1. **Worker** polls Redis queue for translation jobs
 2. **Translator** executes `gemini-subtrans.sh` with job parameters
 3. **Callback Client** POSTs result to configured endpoint
-
-## License
-
-MIT
