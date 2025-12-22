@@ -48,11 +48,21 @@ type GeminiConfig struct {
 }
 
 type OpenRouterConfig struct {
-	APIKey       string `mapstructure:"api_key"`
+	APIKey          string          `mapstructure:"api_key"`
+	Model           string          `mapstructure:"model"`
+	Instruction     string          `mapstructure:"instruction"`
+	MaxBatchSize    int             `mapstructure:"max_batch_size"`
+	RateLimit       int             `mapstructure:"rate_limit"`
+	AutoSelectModel bool            `mapstructure:"auto_select_model"`
+	Evaluator       EvaluatorConfig `mapstructure:"evaluator"`
+	FallbackModel   string          `mapstructure:"fallback_model"`
+}
+
+type EvaluatorConfig struct {
+	Provider     string `mapstructure:"provider"`
+	GeminiAPIKey string `mapstructure:"gemini_api_key"`
 	Model        string `mapstructure:"model"`
-	Instruction  string `mapstructure:"instruction"`
-	MaxBatchSize int    `mapstructure:"max_batch_size"`
-	RateLimit    int    `mapstructure:"rate_limit"`
+	ScheduleHour int    `mapstructure:"schedule_hour"` // Hour of day (0-23) for daily evaluation
 }
 
 type TranslatorConfig struct {
@@ -215,9 +225,38 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("callback.url is required")
 	case c.OpenRouter.APIKey == "" && c.Gemini.APIKey == "":
 		return fmt.Errorf("either openrouter.api_key or gemini.api_key is required")
-	case c.OpenRouter.APIKey != "" && c.OpenRouter.Model == "":
-		return fmt.Errorf("openrouter.model is required when openrouter.api_key is set")
+	case c.OpenRouter.APIKey != "" && !c.OpenRouter.AutoSelectModel && c.OpenRouter.Model == "":
+		return fmt.Errorf("openrouter.model is required when openrouter.api_key is set (or enable auto_select_model)")
 	}
+
+	// Validate auto-selection config
+	if c.OpenRouter.AutoSelectModel {
+		if c.OpenRouter.APIKey == "" {
+			return fmt.Errorf("openrouter.api_key is required when auto_select_model is enabled")
+		}
+		if c.OpenRouter.FallbackModel == "" {
+			return fmt.Errorf("openrouter.fallback_model is required when auto_select_model is enabled")
+		}
+		if c.OpenRouter.Evaluator.Provider == "" {
+			return fmt.Errorf("openrouter.evaluator.provider is required when auto_select_model is enabled")
+		}
+		if c.OpenRouter.Evaluator.Provider != "gemini" {
+			return fmt.Errorf("only 'gemini' is supported as evaluator.provider")
+		}
+		// Check evaluator API key (can reuse from gemini section)
+		if c.OpenRouter.Evaluator.GeminiAPIKey == "" && c.Gemini.APIKey == "" {
+			return fmt.Errorf("either openrouter.evaluator.gemini_api_key or gemini.api_key is required when auto_select_model is enabled")
+		}
+		// Set default schedule hour if not specified
+		if c.OpenRouter.Evaluator.ScheduleHour < 0 || c.OpenRouter.Evaluator.ScheduleHour > 23 {
+			c.OpenRouter.Evaluator.ScheduleHour = 3 // Default to 3 AM
+		}
+		// Set default evaluator model if not specified
+		if c.OpenRouter.Evaluator.Model == "" {
+			c.OpenRouter.Evaluator.Model = "gemini-3-flash"
+		}
+	}
+
 	return nil
 }
 
@@ -300,20 +339,26 @@ func Load(path string) (*Config, error) {
 // SafeLogValues returns config values safe for logging (masks secrets).
 func (c *Config) SafeLogValues() map[string]any {
 	return map[string]any{
-		"redis.url":                 c.Redis.URL,
-		"redis.queue":               c.Redis.Queue,
-		"callback.url":              c.Callback.URL,
-		"gemini.api_key":            util.MaskSecret(c.Gemini.APIKey),
-		"gemini.model":              c.Gemini.Model,
-		"gemini.instruction":        c.Gemini.Instruction,
-		"gemini.max_batch_size":     c.Gemini.MaxBatchSize,
-		"gemini.rate_limit":         c.Gemini.RateLimit,
-		"openrouter.api_key":        util.MaskSecret(c.OpenRouter.APIKey),
-		"openrouter.model":          c.OpenRouter.Model,
-		"openrouter.instruction":    c.OpenRouter.Instruction,
-		"openrouter.max_batch_size": c.OpenRouter.MaxBatchSize,
-		"openrouter.rate_limit":     c.OpenRouter.RateLimit,
-		"translator.target_lang":    c.Translator.TargetLanguage,
-		"translator.suffix":         c.Translator.OutputSuffix,
+		"redis.url":                           c.Redis.URL,
+		"redis.queue":                         c.Redis.Queue,
+		"callback.url":                        c.Callback.URL,
+		"gemini.api_key":                      util.MaskSecret(c.Gemini.APIKey),
+		"gemini.model":                        c.Gemini.Model,
+		"gemini.instruction":                  c.Gemini.Instruction,
+		"gemini.max_batch_size":               c.Gemini.MaxBatchSize,
+		"gemini.rate_limit":                   c.Gemini.RateLimit,
+		"openrouter.api_key":                  util.MaskSecret(c.OpenRouter.APIKey),
+		"openrouter.model":                    c.OpenRouter.Model,
+		"openrouter.instruction":              c.OpenRouter.Instruction,
+		"openrouter.max_batch_size":           c.OpenRouter.MaxBatchSize,
+		"openrouter.rate_limit":               c.OpenRouter.RateLimit,
+		"openrouter.auto_select_model":        c.OpenRouter.AutoSelectModel,
+		"openrouter.fallback_model":           c.OpenRouter.FallbackModel,
+		"openrouter.evaluator.provider":       c.OpenRouter.Evaluator.Provider,
+		"openrouter.evaluator.gemini_api_key": util.MaskSecret(c.OpenRouter.Evaluator.GeminiAPIKey),
+		"openrouter.evaluator.model":          c.OpenRouter.Evaluator.Model,
+		"openrouter.evaluator.schedule_hour":  c.OpenRouter.Evaluator.ScheduleHour,
+		"translator.target_lang":              c.Translator.TargetLanguage,
+		"translator.suffix":                   c.Translator.OutputSuffix,
 	}
 }

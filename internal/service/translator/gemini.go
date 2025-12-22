@@ -102,4 +102,3 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) 
 
 	return executeScript(cmd, outputPath)
 }
-

@@ -30,7 +30,7 @@ callback:
 # Access to 100+ models: OpenAI, Anthropic, Google, Meta, etc.
 openrouter:
   api_key: ""                          # REQUIRED - OpenRouter API key
-  model: "openai/gpt-4o-mini"          # Model in provider/model format
+  model: "openai/gpt-4o-mini"          # Model in provider/model format (ignored if auto_select_model is true)
                                        # Examples:
                                        #   - openai/gpt-4o-mini (fast, cheap)
                                        #   - anthropic/claude-3-5-sonnet (high quality)
@@ -38,6 +38,18 @@ openrouter:
   instruction: ""                      # Custom instruction for translation style (optional)
   max_batch_size: 20                   # Max subtitles per batch (tune for performance)
   rate_limit: 10                       # Requests per minute (default: 10, tune based on your plan)
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # AUTO MODEL SELECTION (Optional) - Let AI pick the best free model daily
+  # ───────────────────────────────────────────────────────────────────────────
+  auto_select_model: false             # Enable automatic model selection from free models
+  fallback_model: "google/gemini-3-flash:free"  # Safety fallback if selection fails
+
+  evaluator:
+    provider: "gemini"                 # Evaluator provider (currently only "gemini" supported)
+    gemini_api_key: ""                 # Gemini API key for evaluation (reuses gemini.api_key if empty)
+    model: "gemini-3-flash"            # Model for evaluation (default: gemini-3-flash)
+    schedule_hour: 3                   # Hour (0-23) for daily evaluation (default: 3 AM UTC)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GEMINI - AI Translation Provider (Alternative)

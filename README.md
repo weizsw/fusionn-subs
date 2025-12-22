@@ -73,6 +73,46 @@ translator:
 - `anthropic/claude-3-5-sonnet` - High quality translations
 - `google/gemini-2.0-flash-exp` - Gemini via OpenRouter
 
+#### OpenRouter with Auto Model Selection
+
+Let AI automatically select the best free translation model daily:
+
+```yaml
+openrouter:
+  api_key: ""                          # Get from https://openrouter.ai/
+  
+  # Enable auto-selection
+  auto_select_model: true
+  fallback_model: "google/gemini-3-flash:free"  # Safety fallback
+  
+  evaluator:
+    provider: "gemini"                 # Uses Gemini to evaluate models
+    gemini_api_key: ""                 # Or reuse from gemini section
+    model: "gemini-3-flash"            # Evaluation model (default)
+    schedule_hour: 3                   # Daily evaluation at 3 AM UTC
+
+# Optional: Gemini config for evaluator (if not specified above)
+gemini:
+  api_key: ""                          # Reused by evaluator if evaluator.gemini_api_key is empty
+
+translator:
+  target_language: "Chinese"
+  output_suffix: "chs"
+```
+
+**How it works:**
+
+- Fetches free models from OpenRouter API (excluding code-focused models)
+- Uses Gemini 3 Flash to evaluate which model is best for English→Chinese translation
+- Automatically selects best model on startup and daily at 3 AM UTC
+- Fallback chain: selected → last-known-good → fallback_model
+
+**Benefits:**
+
+- No manual tracking of free model changes
+- Always uses best available free model
+- Cost-effective: evaluation is free (Gemini 3 Flash)
+
 #### Option 2: Gemini Direct
 
 ```yaml
@@ -108,7 +148,12 @@ Override any config value using the format `FUSIONN_SUBS_<SECTION>_<KEY>`:
 | `FUSIONN_SUBS_CALLBACK_URL` | `http://host/callback` | Callback endpoint |
 | **OpenRouter** | | |
 | `FUSIONN_SUBS_OPENROUTER_API_KEY` | `sk-or-...` | OpenRouter API key |
-| `FUSIONN_SUBS_OPENROUTER_MODEL` | `openai/gpt-4o-mini` | OpenRouter model |
+| `FUSIONN_SUBS_OPENROUTER_MODEL` | `openai/gpt-4o-mini` | OpenRouter model (ignored if auto_select_model is true) |
+| `FUSIONN_SUBS_OPENROUTER_AUTO_SELECT_MODEL` | `true` | Enable auto model selection |
+| `FUSIONN_SUBS_OPENROUTER_FALLBACK_MODEL` | `google/gemini-3-flash:free` | Fallback model for auto-selection |
+| `FUSIONN_SUBS_OPENROUTER_EVALUATOR_PROVIDER` | `gemini` | Evaluator provider |
+| `FUSIONN_SUBS_OPENROUTER_EVALUATOR_GEMINI_API_KEY` | `AIza...` | Gemini API key for evaluator |
+| `FUSIONN_SUBS_OPENROUTER_EVALUATOR_SCHEDULE_HOUR` | `3` | Hour (0-23) for daily evaluation |
 | **Gemini** | | |
 | `FUSIONN_SUBS_GEMINI_API_KEY` | `AIza...` | Gemini API key |
 | `FUSIONN_SUBS_GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model |
@@ -120,9 +165,14 @@ fusionn-subs/
 ├── cmd/fusionn-subs/        # Application entry point
 ├── config/                   # Configuration files
 ├── internal/
-│   ├── client/callback/     # HTTP client for callbacks
+│   ├── client/
+│   │   ├── callback/        # HTTP client for callbacks
+│   │   └── openrouter/      # OpenRouter API client
 │   ├── config/              # Viper config with hot-reload
 │   ├── service/
+│   │   ├── modelselection/  # Auto model selection service
+│   │   │   ├── evaluator.go # Gemini-based model evaluator
+│   │   │   └── selector.go  # Model selector with scheduling
 │   │   ├── translator/      # Multi-provider translation service
 │   │   │   ├── factory.go   # Provider selection
 │   │   │   ├── openrouter.go # OpenRouter implementation

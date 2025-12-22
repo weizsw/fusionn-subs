@@ -1,0 +1,24 @@
+I need you to research and evaluate these AI models for English→Chinese subtitle translation quality.
+
+Available free models on OpenRouter:
+{{range $index, $model := .Models}}
+- {{$model.ID}} ({{$model.ContextLen}} tokens)
+{{end}}
+Evaluation criteria (in order of importance):
+1. Translation quality: Accurate, natural Chinese output
+2. Instruction following: Must use exact format (#1 Translation> pattern)
+3. Consistency: Stable output across batches
+4. Context handling: Can process subtitle context effectively
+5. Reliability: Low error rate, handles edge cases
+
+Requirements:
+- Avoid code-focused models (optimized for programming, not natural language translation)
+- Must work well with Chinese language (some models have better CJK support)
+- Must follow structured output formats reliably
+- Prefer models with larger context windows for better coherence
+
+Which model ID is the best choice? Respond with ONLY the model ID, exactly as shown above.
+{{if .Models}}
+Example: {{(index .Models 0).ID}}
+{{end}}
+

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/fusionn-subs/internal/config"
 	"github.com/fusionn-subs/internal/types"
@@ -18,6 +19,7 @@ type OpenRouterTranslator struct {
 	scriptPath     string
 	workDir        string
 	apiKey         string
+	mu             sync.RWMutex // Protects model field
 	model          string
 	instruction    string
 	maxBatchSize   int
@@ -56,6 +58,25 @@ func NewOpenRouterTranslator(cfg config.OpenRouterConfig, targetLang, outputSuff
 	}
 }
 
+// UpdateModel updates the model used for translation (thread-safe).
+func (t *OpenRouterTranslator) UpdateModel(newModel string) {
+	t.mu.Lock()
+	oldModel := t.model
+	t.model = newModel
+	t.mu.Unlock()
+
+	if oldModel != newModel {
+		logger.Infof("🔄 Translator model updated: %s → %s", oldModel, newModel)
+	}
+}
+
+// GetModel returns the current model (thread-safe).
+func (t *OpenRouterTranslator) GetModel() string {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.model
+}
+
 // Translate translates subtitles using OpenRouter
 func (t *OpenRouterTranslator) Translate(ctx context.Context, msg types.JobMessage) (string, error) {
 	if err := msg.Validate(); err != nil {
@@ -67,13 +88,18 @@ func (t *OpenRouterTranslator) Translate(ctx context.Context, msg types.JobMessa
 	ctxTimeout, cancel := context.WithTimeout(ctx, config.DefaultGeminiTimeout)
 	defer cancel()
 
+	// Get current model (thread-safe)
+	t.mu.RLock()
+	currentModel := t.model
+	t.mu.RUnlock()
+
 	// Build args for llm-subtrans.sh (OpenRouter default)
 	args := []string{
 		msg.Path,
 		"-o", outputPath,
 		"-l", t.targetLanguage,
 		"--apikey", t.apiKey,
-		"--model", t.model,
+		"--model", currentModel,
 	}
 
 	if overview := strings.TrimSpace(msg.Overview); overview != "" {
@@ -101,9 +127,8 @@ func (t *OpenRouterTranslator) Translate(ctx context.Context, msg types.JobMessa
 	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY="+t.apiKey)
 
 	logger.Infof("🔄 Starting translation (OpenRouter): %s → %s", msg.Path, outputPath)
-	logger.Infof("📦 Model: %s", t.model)
+	logger.Infof("📦 Model: %s", currentModel)
 	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
 
 	return executeScript(cmd, outputPath)
 }
-

@@ -14,6 +14,7 @@ import (
 
 	"github.com/fusionn-subs/internal/client/callback"
 	"github.com/fusionn-subs/internal/config"
+	"github.com/fusionn-subs/internal/service/modelselection"
 	"github.com/fusionn-subs/internal/service/translator"
 	"github.com/fusionn-subs/internal/service/worker"
 	"github.com/fusionn-subs/internal/version"
@@ -67,6 +68,51 @@ func run() error {
 		return fmt.Errorf("translator error: %w", err)
 	}
 
+	// Initialize model selector if auto-selection is enabled
+	var modelSelector *modelselection.Selector
+	if cfg.OpenRouter.APIKey != "" && cfg.OpenRouter.AutoSelectModel {
+		// Get evaluator API key (reuse from gemini section if not specified)
+		evaluatorAPIKey := cfg.OpenRouter.Evaluator.GeminiAPIKey
+		if evaluatorAPIKey == "" {
+			evaluatorAPIKey = cfg.Gemini.APIKey
+		}
+
+		selectorCfg := modelselection.Config{
+			OpenRouterAPIKey: cfg.OpenRouter.APIKey,
+			EvaluatorAPIKey:  evaluatorAPIKey,
+			EvaluatorModel:   cfg.OpenRouter.Evaluator.Model,
+			FallbackModel:    cfg.OpenRouter.FallbackModel,
+			ScheduleHour:     cfg.OpenRouter.Evaluator.ScheduleHour,
+		}
+
+		selector, err := modelselection.NewSelector(selectorCfg)
+		if err != nil {
+			return fmt.Errorf("model selector error: %w", err)
+		}
+		modelSelector = selector
+
+		// Start selector (blocks until initial evaluation completes)
+		ctx := context.Background()
+		if err := selector.Start(ctx); err != nil {
+			return fmt.Errorf("model selector start error: %w", err)
+		}
+
+		// Get the selected model and update the translator
+		if openrouterTranslator, ok := translatorSvc.(*translator.OpenRouterTranslator); ok {
+			selectedModel := selector.GetCurrentModel()
+			openrouterTranslator.UpdateModel(selectedModel)
+
+			// Register callback for future model updates
+			selector.OnModelUpdate(func(newModel string) {
+				openrouterTranslator.UpdateModel(newModel)
+			})
+
+			logger.Infof("✨ Auto model selection active (daily at %02d:00 UTC)", cfg.OpenRouter.Evaluator.ScheduleHour)
+		} else {
+			logger.Warnf("⚠️  Auto-selection enabled but translator is not OpenRouterTranslator")
+		}
+	}
+
 	callbackClient := callback.NewClient(cfg.Callback.URL, config.DefaultCallbackTimeout, config.DefaultCallbackMaxRetries)
 	logger.Infof("📤 Callback: %s", cfg.Callback.URL)
 
@@ -83,6 +129,11 @@ func run() error {
 	// Setup graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Cleanup model selector on shutdown
+	if modelSelector != nil {
+		defer modelSelector.Stop()
+	}
 
 	// Run worker (blocks until context canceled)
 	err = workerSvc.Run(ctx)
