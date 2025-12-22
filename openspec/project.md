@@ -31,10 +31,11 @@
 - **Worker pattern**: Long-running consumer (`worker.Run`) with exponential backoff on Redis errors
 - **Factory pattern**: `NewTranslator()` selects provider (OpenRouter or Gemini) based on config
 - **Service abstraction**: `Translator` interface with multiple implementations (`OpenRouterTranslator`, `GeminiTranslator`)
+- **Auto model selection**: Optional AI-driven model selector using Gemini to evaluate and pick best free OpenRouter model daily
 - **Config hot-reload**: `config.Manager` polls file changes every 10s, notifies subscribers (Docker bind mount safe)
 - **Callback client**: Retries with exponential backoff (max 3 retries, 15s timeout per attempt)
 - **Dependency injection**: Services passed as constructor args (`NewWorker(redis, config, translator, callback)`)
-- **Single responsibility**: Each package has one clear purpose (`worker`, `translator`, `callback`, `config`)
+- **Single responsibility**: Each package has one clear purpose (`worker`, `translator`, `callback`, `config`, `modelselection`)
 
 ### Testing Strategy
 - Standard Go testing with `go test -v ./...`
@@ -55,12 +56,26 @@
 2. Worker polls with `BRPOP` (blocking, 5s timeout)
 3. Job message contains: `path` (input subtitle), `video_path`, `provider`, `file_name`, `overview` (context for AI)
 4. Factory selects translator based on config (OpenRouter or Gemini)
-5. Translator invokes appropriate script:
+5. **Optional**: If auto-selection enabled, model selector evaluates and picks best free OpenRouter model on startup and daily at 3 AM
+6. Translator invokes appropriate script:
    - OpenRouter: `/opt/llm-subtrans/llm-subtrans.sh` (default, 100+ models)
    - Gemini: `/opt/llm-subtrans/gemini-subtrans.sh` (direct API)
-6. Script generates translated subtitle (default: `{original}.chs.srt`)
-7. Worker POSTs callback to configured endpoint with result paths
-8. Callback includes: `chs_subtitle_path`, `eng_subtitle_path`, `video_path`
+7. Script generates translated subtitle (default: `{original}.chs.srt`)
+8. Worker POSTs callback to configured endpoint with result paths
+9. Callback includes: `chs_subtitle_path`, `eng_subtitle_path`, `video_path`
+
+### Auto Model Selection Workflow (Optional)
+When `openrouter.auto_select_model: true`:
+1. **Startup**: Blocks until initial model evaluation completes
+2. **Fetching**: Get free models from OpenRouter API (filter out code-focused models)
+3. **Evaluation**: Use Gemini 3 Flash to evaluate models based on:
+   - Translation quality (English→Chinese)
+   - Instruction following (format compliance)
+   - Consistency and reliability
+   - Context handling capability
+4. **Selection**: Update translator with best model
+5. **Scheduling**: Re-evaluate daily at configured hour (default: 3 AM UTC)
+6. **Fallback**: If evaluation fails: selected → last-known-good → fallback_model
 
 ### Job Message Schema
 ```go
@@ -117,7 +132,13 @@ type JobMessage struct {
 - `ENV`: Set to `production` for release mode (JSON logging)
 - `FUSIONN_SUBS_*`: Override any config value
   - `FUSIONN_SUBS_OPENROUTER_API_KEY`: OpenRouter API key
-  - `FUSIONN_SUBS_OPENROUTER_MODEL`: OpenRouter model
+  - `FUSIONN_SUBS_OPENROUTER_MODEL`: OpenRouter model (ignored if auto-selection enabled)
+  - `FUSIONN_SUBS_OPENROUTER_AUTO_SELECT_MODEL`: Enable auto model selection (true/false)
+  - `FUSIONN_SUBS_OPENROUTER_FALLBACK_MODEL`: Fallback model for auto-selection
+  - `FUSIONN_SUBS_OPENROUTER_EVALUATOR_PROVIDER`: Evaluator provider (gemini)
+  - `FUSIONN_SUBS_OPENROUTER_EVALUATOR_GEMINI_API_KEY`: Gemini API key for evaluator
+  - `FUSIONN_SUBS_OPENROUTER_EVALUATOR_MODEL`: Evaluator model (default: gemini-3-flash)
+  - `FUSIONN_SUBS_OPENROUTER_EVALUATOR_SCHEDULE_HOUR`: Daily evaluation hour 0-23 (default: 3)
   - `FUSIONN_SUBS_GEMINI_API_KEY`: Gemini API key
   - `FUSIONN_SUBS_GEMINI_MODEL`: Gemini model
 - Script paths:
