@@ -62,16 +62,10 @@ func run() error {
 	}()
 
 	// Initialize services
-	translatorSvc := translator.NewGeminiTranslator(translator.Config{
-		APIKey:         cfg.Gemini.APIKey,
-		Model:          cfg.Gemini.Model,
-		Instruction:    cfg.Gemini.Instruction,
-		MaxBatchSize:   cfg.Gemini.MaxBatchSize,
-		RateLimit:      cfg.Gemini.RateLimit,
-		TargetLanguage: cfg.Translator.TargetLanguage,
-		OutputSuffix:   cfg.Translator.OutputSuffix,
-	})
-	logger.Infof("🤖 Translator: %s", cfg.Gemini.Model)
+	translatorSvc, err := translator.NewTranslator(cfg)
+	if err != nil {
+		return fmt.Errorf("translator error: %w", err)
+	}
 
 	callbackClient := callback.NewClient(cfg.Callback.URL, config.DefaultCallbackTimeout, config.DefaultCallbackMaxRetries)
 	logger.Infof("📤 Callback: %s", cfg.Callback.URL)

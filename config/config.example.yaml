@@ -4,7 +4,11 @@
 # Copy this file to config.yaml and fill in your settings.
 #
 # Environment variables can override any config value using the format:
-# FUSIONN_SUBS_<SECTION>_<KEY> (e.g., FUSIONN_SUBS_GEMINI_API_KEY)
+# FUSIONN_SUBS_<SECTION>_<KEY> (e.g., FUSIONN_SUBS_OPENROUTER_API_KEY)
+#
+# ⚠️  PROVIDER SELECTION: Configure EITHER openrouter OR gemini (not both)
+#     - OpenRouter: Access to 100+ models from multiple providers
+#     - Gemini: Direct Google Gemini API access
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REDIS - Message queue for translation jobs
@@ -20,15 +24,32 @@ callback:
   url: "http://localhost:4664/api/v1/async_merge"  # Endpoint for callback
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GEMINI - AI Translation Provider
+# OPENROUTER - AI Translation Provider (Recommended)
+# ─────────────────────────────────────────────────────────────────────────────
+# Get API key from: https://openrouter.ai/
+# Access to 100+ models: OpenAI, Anthropic, Google, Meta, etc.
+openrouter:
+  api_key: ""                          # REQUIRED - OpenRouter API key
+  model: "openai/gpt-4o-mini"          # Model in provider/model format
+                                       # Examples:
+                                       #   - openai/gpt-4o-mini (fast, cheap)
+                                       #   - anthropic/claude-3-5-sonnet (high quality)
+                                       #   - google/gemini-2.0-flash-exp (Gemini via OpenRouter)
+  instruction: ""                      # Custom instruction for translation style (optional)
+  max_batch_size: 20                   # Max subtitles per batch (tune for performance)
+  rate_limit: 10                       # Requests per minute (default: 10, tune based on your plan)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GEMINI - AI Translation Provider (Alternative)
 # ─────────────────────────────────────────────────────────────────────────────
 # Get API key from: https://aistudio.google.com/apikey
-gemini:
-  api_key: ""                       # REQUIRED - Gemini API key
-  model: "gemini-2.5-flash-latest"  # Model to use
-  instruction: ""                   # Custom instruction for translation style (optional)
-  max_batch_size: 20                # Max subtitles per batch (tune for performance)
-  rate_limit: 8                     # Requests per minute (depends on your Gemini plan)
+# Direct Gemini API access (if you prefer not to use OpenRouter)
+# gemini:
+#   api_key: ""                       # REQUIRED - Gemini API key
+#   model: "gemini-2.5-flash-latest"  # Model to use
+#   instruction: ""                   # Custom instruction for translation style (optional)
+#   max_batch_size: 20                # Max subtitles per batch (tune for performance)
+#   rate_limit: 8                     # Requests per minute (depends on your Gemini plan)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TRANSLATOR - Output settings

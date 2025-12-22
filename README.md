@@ -1,6 +1,6 @@
 # fusionn-subs
 
-Go worker that polls Redis for subtitle translation jobs, runs `gemini-subtrans.sh`, and posts callback payloads once the Chinese subtitles are generated.
+Go worker that polls Redis for subtitle translation jobs, translates subtitles using AI (OpenRouter or Gemini), and posts callback payloads once translations are complete.
 
 ## Quick Start
 
@@ -34,9 +34,45 @@ docker pull weizsw/fusionn-subs:latest
 
 Configuration is managed via YAML file with environment variable overrides.
 
+### Provider Selection
+
+Choose **one** translation provider:
+
+- **OpenRouter** (Recommended): Access to 100+ models from OpenAI, Anthropic, Google, Meta, etc.
+- **Gemini**: Direct Google Gemini API access
+
 ### Config File
 
 Copy `config/config.example.yaml` to `config/config.yaml`:
+
+#### Option 1: OpenRouter (Recommended)
+
+```yaml
+redis:
+  url: "redis://localhost:6379"
+  queue: "translate_queue"
+
+callback:
+  url: "http://localhost:4664/api/v1/async_merge"
+
+openrouter:
+  api_key: ""                          # Get from https://openrouter.ai/
+  model: "openai/gpt-4o-mini"          # Model in provider/model format
+  instruction: ""                      # Custom translation instruction (optional)
+  max_batch_size: 20                   # Tune for performance
+  rate_limit: 10                       # Default: 10 RPM (tune based on your plan)
+
+translator:
+  target_language: "Chinese"
+  output_suffix: "chs"
+```
+
+**Popular OpenRouter Models:**
+- `openai/gpt-4o-mini` - Fast and affordable
+- `anthropic/claude-3-5-sonnet` - High quality translations
+- `google/gemini-2.0-flash-exp` - Gemini via OpenRouter
+
+#### Option 2: Gemini Direct
 
 ```yaml
 redis:
@@ -47,7 +83,7 @@ callback:
   url: "http://localhost:4664/api/v1/async_merge"
 
 gemini:
-  api_key: ""                       # REQUIRED - or set via FUSIONN_SUBS_GEMINI_API_KEY
+  api_key: ""                       # Get from https://aistudio.google.com/apikey
   model: "gemini-2.5-flash-latest"
   instruction: ""                   # Custom translation instruction (optional)
   max_batch_size: 20                # Tune for performance
@@ -69,8 +105,12 @@ Override any config value using the format `FUSIONN_SUBS_<SECTION>_<KEY>`:
 | `FUSIONN_SUBS_REDIS_URL` | `redis://host:6379` | Redis connection URL |
 | `FUSIONN_SUBS_REDIS_QUEUE` | `translate_queue` | Queue to consume from |
 | `FUSIONN_SUBS_CALLBACK_URL` | `http://host/callback` | Callback endpoint |
+| **OpenRouter** | | |
+| `FUSIONN_SUBS_OPENROUTER_API_KEY` | `sk-or-...` | OpenRouter API key |
+| `FUSIONN_SUBS_OPENROUTER_MODEL` | `openai/gpt-4o-mini` | OpenRouter model |
+| **Gemini** | | |
 | `FUSIONN_SUBS_GEMINI_API_KEY` | `AIza...` | Gemini API key |
-| `FUSIONN_SUBS_GEMINI_MODEL` | `gemini-2.5-flash` | Model to use |
+| `FUSIONN_SUBS_GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model |
 
 ## Project Structure
 
@@ -82,7 +122,10 @@ fusionn-subs/
 │   ├── client/callback/     # HTTP client for callbacks
 │   ├── config/              # Viper config with hot-reload
 │   ├── service/
-│   │   ├── translator/      # Gemini translation service
+│   │   ├── translator/      # Multi-provider translation service
+│   │   │   ├── factory.go   # Provider selection
+│   │   │   ├── openrouter.go # OpenRouter implementation
+│   │   │   └── gemini.go    # Gemini implementation
 │   │   └── worker/          # Redis queue consumer
 │   ├── types/               # Domain types (JobMessage)
 │   └── version/             # Version info
@@ -123,7 +166,10 @@ services:
     environment:
       ENV: production
       CONFIG_PATH: /app/config/config.yaml
-      FUSIONN_SUBS_GEMINI_API_KEY: ${GEMINI_API_KEY}
+      # Use OpenRouter (recommended)
+      FUSIONN_SUBS_OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      # OR use Gemini
+      # FUSIONN_SUBS_GEMINI_API_KEY: ${GEMINI_API_KEY}
       TZ: Asia/Shanghai
 ```
 
@@ -151,5 +197,26 @@ make build
 ## Architecture
 
 1. **Worker** polls Redis queue for translation jobs
-2. **Translator** executes `gemini-subtrans.sh` with job parameters
-3. **Callback Client** POSTs result to configured endpoint
+2. **Translator Factory** selects provider (OpenRouter or Gemini) based on config
+3. **Translator** executes appropriate script (`llm-subtrans.sh` or `gemini-subtrans.sh`)
+4. **Callback Client** POSTs result to configured endpoint
+
+### Rate Limiting
+
+Default rate limit is **10 requests/minute** (conservative, works for most providers).
+
+Tune based on your provider plan:
+- OpenRouter: Varies by model (check your plan)
+- Gemini Free: 15 RPM
+- Gemini Pro: Higher limits
+
+### Migration from Gemini-only
+
+Existing Gemini configurations continue to work without changes. To switch to OpenRouter:
+
+1. Get API key from https://openrouter.ai/
+2. Add `openrouter` section to config
+3. Remove or comment out `gemini` section
+4. Restart service
+
+You can still use Gemini models via OpenRouter: `model: "google/gemini-2.0-flash-exp"`

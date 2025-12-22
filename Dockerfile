@@ -17,6 +17,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 FROM python:3.11-slim
 
 ENV LLM_SUBTRANS_DIR=/opt/llm-subtrans \
+    LLM_SUBTRANS_SCRIPT_PATH=/opt/llm-subtrans/llm-subtrans.sh \
     GEMINI_SCRIPT_PATH=/opt/llm-subtrans/gemini-subtrans.sh \
     GEMINI_WORKDIR=/opt/llm-subtrans
 
@@ -26,7 +27,7 @@ RUN git clone --depth 1 https://github.com/machinewrapped/llm-subtrans.git ${LLM
 
 WORKDIR ${LLM_SUBTRANS_DIR}
 
-RUN set -e; printf "2\n\n2\n\n" | ./install.sh
+RUN set -e; printf "2\n\n0\n" | ./install.sh
 
 WORKDIR /app
 
