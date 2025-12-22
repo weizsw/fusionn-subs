@@ -68,6 +68,7 @@ translator:
 ```
 
 **Popular OpenRouter Models:**
+
 - `openai/gpt-4o-mini` - Fast and affordable
 - `anthropic/claude-3-5-sonnet` - High quality translations
 - `google/gemini-2.0-flash-exp` - Gemini via OpenRouter
@@ -206,6 +207,7 @@ make build
 Default rate limit is **10 requests/minute** (conservative, works for most providers).
 
 Tune based on your provider plan:
+
 - OpenRouter: Varies by model (check your plan)
 - Gemini Free: 15 RPM
 - Gemini Pro: Higher limits
@@ -214,7 +216,7 @@ Tune based on your provider plan:
 
 Existing Gemini configurations continue to work without changes. To switch to OpenRouter:
 
-1. Get API key from https://openrouter.ai/
+1. Get API key from <https://openrouter.ai/>
 2. Add `openrouter` section to config
 3. Remove or comment out `gemini` section
 4. Restart service
