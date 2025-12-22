@@ -26,6 +26,7 @@ type Config struct {
 	Redis      RedisConfig      `mapstructure:"redis"`
 	Callback   CallbackConfig   `mapstructure:"callback"`
 	Gemini     GeminiConfig     `mapstructure:"gemini"`
+	OpenRouter OpenRouterConfig `mapstructure:"openrouter"`
 	Translator TranslatorConfig `mapstructure:"translator"`
 }
 
@@ -39,6 +40,14 @@ type CallbackConfig struct {
 }
 
 type GeminiConfig struct {
+	APIKey       string `mapstructure:"api_key"`
+	Model        string `mapstructure:"model"`
+	Instruction  string `mapstructure:"instruction"`
+	MaxBatchSize int    `mapstructure:"max_batch_size"`
+	RateLimit    int    `mapstructure:"rate_limit"`
+}
+
+type OpenRouterConfig struct {
 	APIKey       string `mapstructure:"api_key"`
 	Model        string `mapstructure:"model"`
 	Instruction  string `mapstructure:"instruction"`
@@ -204,8 +213,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("redis.queue is required")
 	case c.Callback.URL == "":
 		return fmt.Errorf("callback.url is required")
-	case c.Gemini.APIKey == "":
-		return fmt.Errorf("gemini.api_key is required")
+	case c.OpenRouter.APIKey == "" && c.Gemini.APIKey == "":
+		return fmt.Errorf("either openrouter.api_key or gemini.api_key is required")
+	case c.OpenRouter.APIKey != "" && c.OpenRouter.Model == "":
+		return fmt.Errorf("openrouter.model is required when openrouter.api_key is set")
 	}
 	return nil
 }
@@ -289,15 +300,20 @@ func Load(path string) (*Config, error) {
 // SafeLogValues returns config values safe for logging (masks secrets).
 func (c *Config) SafeLogValues() map[string]any {
 	return map[string]any{
-		"redis.url":              c.Redis.URL,
-		"redis.queue":            c.Redis.Queue,
-		"callback.url":           c.Callback.URL,
-		"gemini.api_key":         util.MaskSecret(c.Gemini.APIKey),
-		"gemini.model":           c.Gemini.Model,
-		"gemini.instruction":     c.Gemini.Instruction,
-		"gemini.max_batch_size":  c.Gemini.MaxBatchSize,
-		"gemini.rate_limit":      c.Gemini.RateLimit,
-		"translator.target_lang": c.Translator.TargetLanguage,
-		"translator.suffix":      c.Translator.OutputSuffix,
+		"redis.url":                 c.Redis.URL,
+		"redis.queue":               c.Redis.Queue,
+		"callback.url":              c.Callback.URL,
+		"gemini.api_key":            util.MaskSecret(c.Gemini.APIKey),
+		"gemini.model":              c.Gemini.Model,
+		"gemini.instruction":        c.Gemini.Instruction,
+		"gemini.max_batch_size":     c.Gemini.MaxBatchSize,
+		"gemini.rate_limit":         c.Gemini.RateLimit,
+		"openrouter.api_key":        util.MaskSecret(c.OpenRouter.APIKey),
+		"openrouter.model":          c.OpenRouter.Model,
+		"openrouter.instruction":    c.OpenRouter.Instruction,
+		"openrouter.max_batch_size": c.OpenRouter.MaxBatchSize,
+		"openrouter.rate_limit":     c.OpenRouter.RateLimit,
+		"translator.target_lang":    c.Translator.TargetLanguage,
+		"translator.suffix":         c.Translator.OutputSuffix,
 	}
 }

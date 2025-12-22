@@ -3,7 +3,6 @@ package translator
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -13,8 +12,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/fusionn-subs/internal/config"
-	"github.com/fusionn-subs/internal/types"
 	"github.com/fusionn-subs/internal/util"
 	"github.com/fusionn-subs/pkg/logger"
 )
@@ -25,104 +22,8 @@ const (
 	dimEnd   = "\033[0m"
 )
 
-type Translator interface {
-	Translate(ctx context.Context, msg types.JobMessage) (string, error)
-}
-
-type GeminiTranslator struct {
-	scriptPath     string
-	workDir        string
-	apiKey         string
-	model          string
-	instruction    string
-	maxBatchSize   int
-	rateLimit      int
-	targetLanguage string
-	outputSuffix   string
-}
-
-type Config struct {
-	APIKey         string
-	Model          string
-	Instruction    string
-	MaxBatchSize   int
-	RateLimit      int
-	TargetLanguage string
-	OutputSuffix   string
-}
-
-func NewGeminiTranslator(cfg Config) *GeminiTranslator {
-	scriptPath := os.Getenv("GEMINI_SCRIPT_PATH")
-	if scriptPath == "" {
-		scriptPath = "/opt/llm-subtrans/gemini-subtrans.sh"
-	}
-	workDir := os.Getenv("GEMINI_WORKDIR")
-	if workDir == "" {
-		workDir = "/opt/llm-subtrans"
-	}
-
-	return &GeminiTranslator{
-		scriptPath:     scriptPath,
-		workDir:        workDir,
-		apiKey:         cfg.APIKey,
-		model:          cfg.Model,
-		instruction:    cfg.Instruction,
-		maxBatchSize:   cfg.MaxBatchSize,
-		rateLimit:      cfg.RateLimit,
-		targetLanguage: cfg.TargetLanguage,
-		outputSuffix:   cfg.OutputSuffix,
-	}
-}
-
-func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) (string, error) {
-	if err := msg.Validate(); err != nil {
-		return "", fmt.Errorf("invalid message: %w", err)
-	}
-
-	outputPath := msg.OutputPath(t.outputSuffix)
-
-	ctxTimeout, cancel := context.WithTimeout(ctx, config.DefaultGeminiTimeout)
-	defer cancel()
-
-	// Build args
-	args := []string{
-		msg.Path,
-		"-o", outputPath,
-		"-l", t.targetLanguage,
-		"-k", t.apiKey,
-	}
-
-	if t.model != "" {
-		args = append(args, "-m", t.model)
-	}
-
-	if overview := strings.TrimSpace(msg.Overview); overview != "" {
-		args = append(args, "-d", overview)
-	}
-
-	if t.instruction != "" {
-		args = append(args, "--instruction", t.instruction)
-	}
-
-	if t.rateLimit > 0 {
-		args = append(args, "--ratelimit", strconv.Itoa(t.rateLimit))
-	}
-
-	if t.maxBatchSize > 0 {
-		args = append(args, "--maxbatchsize", strconv.Itoa(t.maxBatchSize))
-	}
-
-	cmd := exec.CommandContext(ctxTimeout, t.scriptPath, args...)
-	if t.workDir != "" {
-		cmd.Dir = t.workDir
-	}
-
-	// Pass API key via environment only (security: not visible in process list)
-	cmd.Env = append(os.Environ(), "GEMINI_API_KEY="+t.apiKey)
-
-	logger.Infof("🔄 Starting translation: %s → %s", msg.Path, outputPath)
-	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
-
+// executeScript executes a script command and handles stdout/stderr streaming
+func executeScript(cmd *exec.Cmd, outputPath string) (string, error) {
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", fmt.Errorf("stdout pipe: %w", err)
