@@ -89,12 +89,35 @@ openrouter:
     provider: "gemini"                 # Uses Gemini to evaluate models
     gemini_api_key: ""                 # Or reuse from gemini section
     model: "gemini-3-flash"            # Evaluation model (default)
-    schedule_hour: 3                   # Daily evaluation at 3 AM UTC
+    schedule_hour: 3                   # Daily evaluation at 3 AM (respects TZ env var)
 
 # Optional: Gemini config for evaluator (if not specified above)
 gemini:
   api_key: ""                          # Reused by evaluator if evaluator.gemini_api_key is empty
+```
 
+**Timezone Configuration:**
+The `schedule_hour` respects your container's `TZ` environment variable:
+
+```yaml
+# In docker-compose.yml
+services:
+  fusionn-subs:
+    environment:
+      - TZ=Asia/Shanghai  # Evaluation runs at 3 AM Shanghai time
+      # - TZ=UTC          # Or use UTC explicitly
+```
+
+Default behavior: Uses system timezone if `TZ` is not set.
+
+**How Auto-Selection Works:**
+
+1. Daily at scheduled hour, fetch all free models from OpenRouter
+2. Filter out code-focused models
+3. Use Gemini 3 Flash to evaluate translation quality
+4. Automatically switch to the best model
+
+```yaml
 translator:
   target_language: "Chinese"
   output_suffix: "chs"

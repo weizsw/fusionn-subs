@@ -67,7 +67,15 @@ func NewSelector(cfg Config) (*Selector, error) {
 // Start performs initial evaluation and starts the scheduler.
 // Blocks until initial evaluation completes or times out.
 func (s *Selector) Start(ctx context.Context) error {
-	logger.Infof("🚀 Starting model selector (daily evaluation at %02d:00 UTC)", s.scheduleHour)
+	// Detect and log timezone
+	zone, offset := time.Now().Zone()
+	offsetHours := offset / 3600
+	var offsetSign string
+	if offsetHours >= 0 {
+		offsetSign = "+"
+	}
+	logger.Infof("🕐 Using timezone: %s (UTC%s%d)", zone, offsetSign, offsetHours)
+	logger.Infof("🚀 Starting model selector (daily evaluation at %02d:00 %s)", s.scheduleHour, zone)
 
 	// Initial evaluation (blocking)
 	if err := s.evaluate(); err != nil {
@@ -163,7 +171,7 @@ func (s *Selector) runScheduler() {
 		case <-s.stop:
 			return
 		case <-ticker.C:
-			now := time.Now().UTC()
+			now := time.Now()
 			if now.Hour() == s.scheduleHour {
 				// Only evaluate once per day
 				s.mu.RLock()

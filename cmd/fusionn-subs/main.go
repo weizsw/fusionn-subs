@@ -107,7 +107,8 @@ func run() error {
 				openrouterTranslator.UpdateModel(newModel)
 			})
 
-			logger.Infof("✨ Auto model selection active (daily at %02d:00 UTC)", cfg.OpenRouter.Evaluator.ScheduleHour)
+			zone, _ := time.Now().Zone()
+			logger.Infof("✨ Auto model selection active (daily at %02d:00 %s)", cfg.OpenRouter.Evaluator.ScheduleHour, zone)
 		} else {
 			logger.Warnf("⚠️  Auto-selection enabled but translator is not OpenRouterTranslator")
 		}
