@@ -1,7 +1,9 @@
 # Model Selection Service Specification
 
-## ADDED Requirements
+## Purpose
 
+Automatically select the best free OpenRouter model for English-to-Chinese subtitle translation by evaluating available models using AI-driven criteria. This eliminates manual model selection and adapts to OpenRouter's rapidly changing free model landscape.
+## Requirements
 ### Requirement: Automatic Free Model Selection
 The system SHALL automatically select the best free OpenRouter model for English-to-Chinese subtitle translation.
 
@@ -71,25 +73,50 @@ The system SHALL use Gemini to evaluate and select the best model for translatio
 - **AND** falls back if retry fails
 
 ### Requirement: Scheduled Model Re-evaluation
-The system SHALL re-evaluate models daily at 3 AM UTC.
+The system SHALL re-evaluate models daily at the configured hour **in the container's local timezone**.
+
+**Previous**: Used hardcoded UTC timezone, ignoring system timezone settings.
+
+**Modified**: 
+- Respects the system's local timezone (determined by `TZ` environment variable)
+- Falls back to system default timezone if `TZ` is not set
+- Logs the detected timezone on startup for transparency
+- Schedule hour is interpreted in local time, not UTC
 
 #### Scenario: Daily schedule trigger
-- **WHEN** the clock reaches 3 AM UTC
+- **WHEN** the clock reaches the configured hour in local timezone
 - **THEN** the system triggers model evaluation
 - **AND** does not interrupt ongoing translations
 - **AND** updates model only after current jobs complete
 
+#### Scenario: Timezone detection and logging
+- **WHEN** the service starts
+- **THEN** detect and log the current timezone (e.g., "Asia/Shanghai")
+- **AND** log the schedule time in local timezone (e.g., "3:00 Asia/Shanghai")
+- **AND** use this timezone for all scheduling decisions
+
 #### Scenario: Timezone handling
 - **WHEN** scheduler initializes
-- **THEN** it calculates next 3 AM UTC from current time
-- **AND** accounts for DST changes
-- **AND** reschedules after each trigger
+- **THEN** it calculates next scheduled hour from current local time
+- **AND** uses `time.Now()` instead of `time.Now().UTC()`
+- **AND** respects daylight saving time (DST) changes automatically
 
 #### Scenario: Concurrent evaluation protection
 - **WHEN** evaluation is already running
 - **AND** scheduler triggers again
 - **THEN** the system skips the duplicate evaluation
 - **AND** logs the skipped attempt
+
+#### Scenario: UTC timezone behavior
+- **WHEN** `TZ=UTC` is explicitly set
+- **THEN** scheduler behaves identically to previous UTC-only behavior
+- **AND** logs show "UTC" as the timezone
+
+#### Scenario: Unset timezone fallback
+- **WHEN** `TZ` environment variable is not set
+- **THEN** use the system's default timezone
+- **AND** log the detected timezone on startup
+- **AND** warn if timezone cannot be determined
 
 ### Requirement: Fallback Model Strategy
 The system SHALL implement three-tier fallback for model selection failures.
@@ -126,28 +153,4 @@ The system SHALL notify components when selected model changes.
 - **THEN** log "model unchanged"
 - **AND** skip translator update
 - **AND** update last evaluation timestamp
-
-## MODIFIED Requirements
-
-### Requirement: OpenRouter Translator Configuration
-The system SHALL support both static and dynamic model configuration for OpenRouter.
-
-**Previous**: Model was set at initialization and never changed.
-
-**Modified**: Model can be updated dynamically when auto-selection is enabled:
-- Static mode (default): `model` field in config, never changes
-- Dynamic mode: `auto_select_model: true`, model selected by evaluator
-- Dynamic model overrides static `model` field when enabled
-
-#### Scenario: Dynamic model configuration
-- **WHEN** `auto_select_model: true` in config
-- **THEN** ignore static `model` field
-- **AND** wait for model selector to provide model
-- **AND** update translator when model changes
-
-#### Scenario: Static model configuration (backward compatible)
-- **WHEN** `auto_select_model: false` or not set
-- **THEN** use `model` field from config
-- **AND** never change model at runtime
-- **AND** behave exactly as before
 

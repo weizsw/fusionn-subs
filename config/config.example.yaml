@@ -49,7 +49,7 @@ openrouter:
     provider: "gemini"                 # Evaluator provider (currently only "gemini" supported)
     gemini_api_key: ""                 # Gemini API key for evaluation (reuses gemini.api_key if empty)
     model: "gemini-3-flash"            # Model for evaluation (default: gemini-3-flash)
-    schedule_hour: 3                   # Hour (0-23) for daily evaluation (default: 3 AM UTC)
+    schedule_hour: 3                   # Hour (0-23) for daily evaluation (respects TZ env var, default: 3 AM local time)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GEMINI - AI Translation Provider (Alternative)
