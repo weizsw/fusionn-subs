@@ -166,9 +166,9 @@ func (e *GeminiEvaluator) callGemini(ctx context.Context, prompt string) (string
 		},
 		"generationConfig": map[string]any{
 			"temperature": 0.1,
-			"thinkingConfig": map[string]string{
-				"thinkingLevel": "high", // Enable maximum thinking for Gemini 3 Flash
-			},
+			// "thinkingConfig": map[string]string{
+			// 	"thinkingLevel": "high", // Enable maximum thinking for Gemini 3 Flash
+			// },
 		},
 		"tools": []map[string]any{
 			{
