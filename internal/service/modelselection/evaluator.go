@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"regexp"
 	"strings"
 	"text/template"
 	"time"
@@ -153,7 +154,7 @@ func (e *GeminiEvaluator) callGemini(ctx context.Context, prompt string) (string
 		"system_instruction": map[string]any{
 			"parts": []map[string]string{
 				{
-					"text": "You are an AI model evaluation expert specializing in language translation systems. Your task is to select the BEST model for English to Chinese subtitle translation. Use deep reasoning and research capabilities to make an informed decision.",
+					"text": "You are an AI model evaluation expert. Select the BEST model for English to Chinese subtitle translation from the provided list. Respond with ONLY the model ID, no explanations or reasoning.",
 				},
 			},
 		},
@@ -166,15 +167,10 @@ func (e *GeminiEvaluator) callGemini(ctx context.Context, prompt string) (string
 		},
 		"generationConfig": map[string]any{
 			"temperature": 0.1,
-			// "thinkingConfig": map[string]string{
-			// 	"thinkingLevel": "high", // Enable maximum thinking for Gemini 3 Flash
-			// },
 		},
-		"tools": []map[string]any{
-			{
-				"googleSearch": map[string]any{}, // Enable Google Search grounding
-			},
-		},
+		// Note: Google Search is intentionally NOT enabled here.
+		// For model selection, we're comparing a known list of models, not researching unknown information.
+		// Enabling search causes verbose, research-style responses instead of concise model IDs.
 	}
 
 	// Response structure
@@ -218,20 +214,35 @@ func (e *GeminiEvaluator) callGemini(ctx context.Context, prompt string) (string
 	rawResponse := result.Candidates[0].Content.Parts[0].Text
 	logger.Infof("💬 Gemini raw response: %q", rawResponse)
 
+	// Warn if response is verbose (indicates prompt not followed)
+	if len(rawResponse) > 100 {
+		logger.Warnf("⚠️  Gemini returned verbose response (%d chars) instead of just model ID", len(rawResponse))
+	}
+
 	selectedModel := strings.TrimSpace(rawResponse)
 
-	// Extract just the model ID if Gemini added extra text
-	// Model IDs typically don't have spaces, so take the first word/line
-	if idx := strings.Index(selectedModel, "\n"); idx != -1 {
-		selectedModel = selectedModel[:idx]
-	}
-	if idx := strings.Index(selectedModel, " "); idx != -1 {
-		selectedModel = selectedModel[:idx]
-	}
-	selectedModel = strings.TrimSpace(selectedModel)
-
-	if selectedModel != rawResponse {
-		logger.Infof("🔧 Extracted model ID: %q (from longer response)", selectedModel)
+	// Robust extraction: Look for model ID pattern in case of verbose response
+	// Pattern: provider/model:free OR provider/model (e.g., "google/gemini-2.0-flash-exp:free")
+	if strings.Contains(selectedModel, "\n") || strings.Contains(selectedModel, " ") {
+		// Response contains explanation - try to extract model ID using regex
+		// Look for pattern: word/word OR word/word:free
+		re := regexp.MustCompile(`([a-z0-9-]+/[a-z0-9.-]+(?::free)?)`)
+		matches := re.FindStringSubmatch(selectedModel)
+		if len(matches) > 1 {
+			extractedID := matches[1]
+			logger.Infof("🔧 Extracted model ID from verbose response: %q", extractedID)
+			selectedModel = extractedID
+		} else {
+			// Fallback: take first word/line
+			if idx := strings.Index(selectedModel, "\n"); idx != -1 {
+				selectedModel = selectedModel[:idx]
+			}
+			if idx := strings.Index(selectedModel, " "); idx != -1 {
+				selectedModel = selectedModel[:idx]
+			}
+			selectedModel = strings.TrimSpace(selectedModel)
+			logger.Infof("🔧 Extracted model ID: %q (first word/line from response)", selectedModel)
+		}
 	}
 
 	return selectedModel, nil

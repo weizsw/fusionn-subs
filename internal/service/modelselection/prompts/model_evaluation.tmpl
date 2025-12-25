@@ -1,8 +1,7 @@
 I need you to research and evaluate these AI models for English→Chinese subtitle translation quality.
 
 Available free models on OpenRouter:
-{{range $index, $model := .Models}}
-- {{$model.ID}} ({{$model.ContextLen}} tokens)
+{{range $index, $model := .Models}}- {{$model.ID}} ({{$model.ContextLen}} tokens)
 {{end}}
 Evaluation criteria (in order of importance):
 1. Translation quality: Accurate, natural Chinese output
@@ -17,8 +16,14 @@ Requirements:
 - Must follow structured output formats reliably
 - Prefer models with larger context windows for better coherence
 
-Which model ID is the best choice? Respond with ONLY the model ID, exactly as shown above.
-{{if .Models}}
-Example: {{(index .Models 0).ID}}
-{{end}}
+---
+IMPORTANT: Respond with ONLY the model ID, exactly as shown in the list above.
+DO NOT include explanations, reasoning, analysis, or additional text.
+
+Format: provider/model:free OR provider/model
+
+Examples:
+{{if .Models}}- {{(index .Models 0).ID}}
+{{if gt (len .Models) 1}}- {{(index .Models 1).ID}}
+{{end}}{{end}}
 
