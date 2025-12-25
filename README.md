@@ -80,10 +80,10 @@ Let AI automatically select the best free translation model daily:
 ```yaml
 openrouter:
   api_key: ""                          # Get from https://openrouter.ai/
+  model: "google/gemini-3-flash:free"  # REQUIRED - Used as fallback if auto-selection fails
   
   # Enable auto-selection
   auto_select_model: true
-  fallback_model: "google/gemini-3-flash:free"  # Safety fallback
   
   evaluator:
     provider: "gemini"                 # Uses Gemini to evaluate models
@@ -125,16 +125,17 @@ translator:
 
 **How it works:**
 
-- Fetches free models from OpenRouter API (excluding code-focused models)
+- Fetches free models from OpenRouter API
 - Uses Gemini 3 Flash to evaluate which model is best for English→Chinese translation
-- Automatically selects best model on startup and daily at 3 AM UTC
-- Fallback chain: selected → last-known-good → fallback_model
+- Automatically selects best model on startup and daily at configured hour (respects TZ env var)
+- Fallback chain: selected → last-known-good → `model`
 
 **Benefits:**
 
 - No manual tracking of free model changes
 - Always uses best available free model
 - Cost-effective: evaluation is free (Gemini 3 Flash)
+- Safe: falls back to your configured `model` if evaluation fails
 
 #### Option 2: Gemini Direct
 

@@ -14,14 +14,14 @@
 # REDIS - Message queue for translation jobs
 # ─────────────────────────────────────────────────────────────────────────────
 redis:
-  url: "redis://localhost:6379"    # Redis connection URL
-  queue: "translate_queue"          # Queue name to consume from
+  url: "redis://localhost:6379" # Redis connection URL
+  queue: "translate_queue" # Queue name to consume from
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CALLBACK - Where to send completed translations
 # ─────────────────────────────────────────────────────────────────────────────
 callback:
-  url: "http://localhost:4664/api/v1/async_merge"  # Endpoint for callback
+  url: "http://localhost:4664/api/v1/async_merge" # Endpoint for callback
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OPENROUTER - AI Translation Provider (Recommended)
@@ -29,27 +29,29 @@ callback:
 # Get API key from: https://openrouter.ai/
 # Access to 100+ models: OpenAI, Anthropic, Google, Meta, etc.
 openrouter:
-  api_key: ""                          # REQUIRED - OpenRouter API key
-  model: "openai/gpt-4o-mini"          # Model in provider/model format (ignored if auto_select_model is true)
-                                       # Examples:
-                                       #   - openai/gpt-4o-mini (fast, cheap)
-                                       #   - anthropic/claude-3-5-sonnet (high quality)
-                                       #   - google/gemini-2.0-flash-exp (Gemini via OpenRouter)
-  instruction: ""                      # Custom instruction for translation style (optional)
-  max_batch_size: 20                   # Max subtitles per batch (tune for performance)
-  rate_limit: 10                       # Requests per minute (default: 10, tune based on your plan)
+  api_key: "" # REQUIRED - OpenRouter API key
+  model:
+    "openai/gpt-4o-mini" # REQUIRED - Model to use (also serves as fallback if auto_select_model is enabled)
+    # Examples:
+    #   - openai/gpt-4o-mini (fast, cheap)
+    #   - anthropic/claude-3-5-sonnet (high quality)
+    #   - google/gemini-2.0-flash-exp (Gemini via OpenRouter)
+  instruction: "" # Custom instruction for translation style (optional)
+  max_batch_size: 20 # Max subtitles per batch (tune for performance)
+  rate_limit: 10 # Requests per minute (default: 10, tune based on your plan)
 
   # ───────────────────────────────────────────────────────────────────────────
   # AUTO MODEL SELECTION (Optional) - Let AI pick the best free model daily
   # ───────────────────────────────────────────────────────────────────────────
-  auto_select_model: false             # Enable automatic model selection from free models
-  fallback_model: "google/gemini-3-flash:free"  # Safety fallback if selection fails
+  # When enabled, AI evaluates free models daily and selects the best one.
+  # Falls back to 'model' field above if evaluation fails.
+  auto_select_model: false # Enable automatic model selection from free models
 
   evaluator:
-    provider: "gemini"                 # Evaluator provider (currently only "gemini" supported)
-    gemini_api_key: ""                 # Gemini API key for evaluation (reuses gemini.api_key if empty)
-    model: "gemini-3-flash"            # Model for evaluation (default: gemini-3-flash)
-    schedule_hour: 3                   # Hour (0-23) for daily evaluation (respects TZ env var, default: 3 AM local time)
+    provider: "gemini" # Evaluator provider (currently only "gemini" supported)
+    gemini_api_key: "" # Gemini API key for evaluation (reuses gemini.api_key if empty)
+    model: "gemini-3-flash" # Model for evaluation (default: gemini-3-flash)
+    schedule_hour: 3 # Hour (0-23) for daily evaluation (respects TZ env var, default: 3 AM local time)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GEMINI - AI Translation Provider (Alternative)
@@ -67,6 +69,6 @@ openrouter:
 # TRANSLATOR - Output settings
 # ─────────────────────────────────────────────────────────────────────────────
 translator:
-  target_language: "Chinese"  # Target translation language
-  output_suffix: "chs"        # Suffix for translated file (e.g., movie.chs.srt)
+  target_language: "Chinese" # Target translation language
+  output_suffix: "chs" # Suffix for translated file (e.g., movie.chs.srt)
 

@@ -17,7 +17,7 @@ type ModelUpdateCallback func(newModel string)
 type Selector struct {
 	openRouterClient *openrouter.Client
 	evaluator        Evaluator
-	fallbackModel    string
+	defaultModel     string
 	scheduleHour     int // Hour of day (0-23) to run evaluation
 
 	mu           sync.RWMutex
@@ -34,7 +34,7 @@ type Config struct {
 	OpenRouterAPIKey string
 	EvaluatorAPIKey  string
 	EvaluatorModel   string
-	FallbackModel    string
+	DefaultModel     string
 	ScheduleHour     int // Hour of day (0-23) for daily evaluation
 }
 
@@ -46,8 +46,8 @@ func NewSelector(cfg Config) (*Selector, error) {
 	if cfg.EvaluatorAPIKey == "" {
 		return nil, fmt.Errorf("evaluator API key required")
 	}
-	if cfg.FallbackModel == "" {
-		return nil, fmt.Errorf("fallback model required")
+	if cfg.DefaultModel == "" {
+		return nil, fmt.Errorf("default model required")
 	}
 
 	// Default schedule hour to 3 AM if not set
@@ -58,7 +58,7 @@ func NewSelector(cfg Config) (*Selector, error) {
 	return &Selector{
 		openRouterClient: openrouter.NewClient(cfg.OpenRouterAPIKey),
 		evaluator:        NewGeminiEvaluator(cfg.EvaluatorAPIKey, cfg.EvaluatorModel),
-		fallbackModel:    cfg.FallbackModel,
+		defaultModel:     cfg.DefaultModel,
 		scheduleHour:     cfg.ScheduleHour,
 		stop:             make(chan struct{}),
 	}, nil
@@ -80,10 +80,10 @@ func (s *Selector) Start(ctx context.Context) error {
 	// Initial evaluation (blocking)
 	if err := s.evaluate(); err != nil {
 		logger.Errorf("❌ Initial model evaluation failed: %v", err)
-		logger.Infof("⚠️  Using fallback model: %s", s.fallbackModel)
+		logger.Infof("⚠️  Using configured model as fallback: %s", s.defaultModel)
 		s.mu.Lock()
-		s.selected = s.fallbackModel
-		s.lastKnown = s.fallbackModel
+		s.selected = s.defaultModel
+		s.lastKnown = s.defaultModel
 		s.mu.Unlock()
 	}
 
@@ -99,7 +99,7 @@ func (s *Selector) Stop() {
 }
 
 // GetCurrentModel returns the currently selected model (thread-safe).
-// Falls back through: selected → lastKnown → fallbackModel.
+// Falls back through: selected → lastKnown → defaultModel.
 func (s *Selector) GetCurrentModel() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -110,7 +110,7 @@ func (s *Selector) GetCurrentModel() string {
 	if s.lastKnown != "" {
 		return s.lastKnown
 	}
-	return s.fallbackModel
+	return s.defaultModel
 }
 
 // OnModelUpdate registers a callback for model changes.

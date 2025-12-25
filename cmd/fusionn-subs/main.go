@@ -81,7 +81,7 @@ func run() error {
 			OpenRouterAPIKey: cfg.OpenRouter.APIKey,
 			EvaluatorAPIKey:  evaluatorAPIKey,
 			EvaluatorModel:   cfg.OpenRouter.Evaluator.Model,
-			FallbackModel:    cfg.OpenRouter.FallbackModel,
+			DefaultModel:     cfg.OpenRouter.Model, // Use configured model as fallback
 			ScheduleHour:     cfg.OpenRouter.Evaluator.ScheduleHour,
 		}
 

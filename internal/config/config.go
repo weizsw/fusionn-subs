@@ -55,7 +55,6 @@ type OpenRouterConfig struct {
 	RateLimit       int             `mapstructure:"rate_limit"`
 	AutoSelectModel bool            `mapstructure:"auto_select_model"`
 	Evaluator       EvaluatorConfig `mapstructure:"evaluator"`
-	FallbackModel   string          `mapstructure:"fallback_model"`
 }
 
 type EvaluatorConfig struct {
@@ -234,8 +233,8 @@ func (c *Config) Validate() error {
 		if c.OpenRouter.APIKey == "" {
 			return fmt.Errorf("openrouter.api_key is required when auto_select_model is enabled")
 		}
-		if c.OpenRouter.FallbackModel == "" {
-			return fmt.Errorf("openrouter.fallback_model is required when auto_select_model is enabled")
+		if c.OpenRouter.Model == "" {
+			return fmt.Errorf("openrouter.model is required when auto_select_model is enabled (used as fallback)")
 		}
 		if c.OpenRouter.Evaluator.Provider == "" {
 			return fmt.Errorf("openrouter.evaluator.provider is required when auto_select_model is enabled")
@@ -353,7 +352,6 @@ func (c *Config) SafeLogValues() map[string]any {
 		"openrouter.max_batch_size":           c.OpenRouter.MaxBatchSize,
 		"openrouter.rate_limit":               c.OpenRouter.RateLimit,
 		"openrouter.auto_select_model":        c.OpenRouter.AutoSelectModel,
-		"openrouter.fallback_model":           c.OpenRouter.FallbackModel,
 		"openrouter.evaluator.provider":       c.OpenRouter.Evaluator.Provider,
 		"openrouter.evaluator.gemini_api_key": util.MaskSecret(c.OpenRouter.Evaluator.GeminiAPIKey),
 		"openrouter.evaluator.model":          c.OpenRouter.Evaluator.Model,
