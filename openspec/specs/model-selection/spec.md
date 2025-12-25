@@ -13,7 +13,7 @@ The system SHALL automatically select the best free OpenRouter model for English
 - **AND** filters out code-focused models
 - **AND** uses Gemini evaluator to select best model
 - **AND** blocks startup until model selected or timeout (30s)
-- **AND** falls back to `fallback_model` if evaluation fails
+- **AND** falls back to `model` if evaluation fails
 
 #### Scenario: Daily re-evaluation
 - **WHEN** the scheduler triggers at 3 AM UTC
@@ -25,7 +25,7 @@ The system SHALL automatically select the best free OpenRouter model for English
 #### Scenario: Evaluation failure fallback
 - **WHEN** model evaluation fails during operation
 - **THEN** the system uses last known good model
-- **AND** if no last known model, uses `fallback_model`
+- **AND** if no last known model, uses `model`
 - **AND** logs the failure with details
 
 ### Requirement: OpenRouter Model API Integration
@@ -136,18 +136,18 @@ The system SHALL re-evaluate models daily at the configured hour **in the contai
 - **AND** warn if timezone cannot be determined
 
 ### Requirement: Fallback Model Strategy
-The system SHALL implement three-tier fallback for model selection failures.
+The system SHALL implement a simplified two-tier fallback using the configured `model` field.
 
-#### Scenario: Three-tier fallback chain
+#### Scenario: Two-tier fallback chain
 - **WHEN** current selected model is unavailable
 - **THEN** attempt to use last known good model
-- **AND** if last known unavailable, use configured fallback_model
+- **AND** if last known unavailable, use configured `model` field
 - **AND** if all fail, log error and prevent service start
 
 #### Scenario: Fallback model validation
-- **WHEN** using fallback_model from config
+- **WHEN** using `model` from config as fallback
 - **THEN** validate it exists in free model list
-- **AND** warn user if fallback is not free
+- **AND** warn user if model is not free
 - **AND** use anyway if explicitly configured
 
 #### Scenario: Last known good persistence
