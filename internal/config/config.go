@@ -36,7 +36,10 @@ type RedisConfig struct {
 }
 
 type CallbackConfig struct {
-	URL string `mapstructure:"url"`
+	URL                 string        `mapstructure:"url"`
+	MaxRetries          int           `mapstructure:"max_retries"`
+	RetryBackoffSeconds []int         `mapstructure:"retry_backoff_seconds"`
+	Timeout             time.Duration `mapstructure:"timeout"`
 }
 
 type GeminiConfig struct {
@@ -65,8 +68,9 @@ type EvaluatorConfig struct {
 }
 
 type TranslatorConfig struct {
-	TargetLanguage string `mapstructure:"target_language"`
-	OutputSuffix   string `mapstructure:"output_suffix"`
+	TargetLanguage        string `mapstructure:"target_language"`
+	OutputSuffix          string `mapstructure:"output_suffix"`
+	MaxTranslationRetries int    `mapstructure:"max_translation_retries"`
 }
 
 // ChangeCallback is called when config changes. Receives old and new config.

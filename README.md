@@ -2,6 +2,8 @@
 
 Go worker that polls Redis for subtitle translation jobs, translates subtitles using AI (OpenRouter or Gemini), and posts callback payloads once translations are complete.
 
+**Integration with [fusionn](https://github.com/weizsw/fusionn):** Automatically translates missing Chinese subtitles for media managed by Sonarr/Radarr.
+
 ## Quick Start
 
 ### Local Development
@@ -50,10 +52,12 @@ Copy `config/config.example.yaml` to `config/config.yaml`:
 ```yaml
 redis:
   url: "redis://localhost:6379"
-  queue: "translate_queue"
+  queue: "fusionn:translation_queue"  # Match fusionn's queue_key
 
 callback:
-  url: "http://localhost:4664/api/v1/async_merge"
+  url: "http://fusionn:8080/api/v1/callback/translation"
+  max_retries: 5
+  retry_backoff_seconds: [1, 2, 4, 8, 16]
 
 openrouter:
   api_key: ""                          # Get from https://openrouter.ai/
@@ -65,6 +69,7 @@ openrouter:
 translator:
   target_language: "Chinese"
   output_suffix: "chs"
+  max_translation_retries: 3           # Retry attempts for failed translations
 ```
 
 **Popular OpenRouter Models:**
@@ -275,6 +280,51 @@ make build
 2. **Translator Factory** selects provider (OpenRouter or Gemini) based on config
 3. **Translator** executes appropriate script (`llm-subtrans.sh` or `gemini-subtrans.sh`)
 4. **Callback Client** POSTs result to configured endpoint
+
+### Job Message Format
+
+fusionn-subs expects jobs in this format:
+
+```json
+{
+  "job_id": "uuid-string",
+  "video_path": "/media/Show/S01E01.mkv",
+  "subtitle_path": "/media/Show/S01E01.eng.srt",
+  "media_title": "Show Name S01E01",
+  "media_type": "episode"
+}
+```
+
+**Fields:**
+- `job_id`: Unique identifier for tracking
+- `video_path`: Path to the video file (for context)
+- `subtitle_path`: Path to the English subtitle file to translate
+- `media_title`: Human-readable media name (used in translation context)
+- `media_type`: "episode" or "movie"
+
+**Callback payload sent after translation:**
+
+```json
+{
+  "job_id": "uuid-string",
+  "video_path": "/media/Show/S01E01.mkv",
+  "eng_subtitle_path": "/media/Show/S01E01.eng.srt",
+  "chs_subtitle_path": "/media/Show/S01E01.chs.srt"
+}
+```
+
+### Retry Logic
+
+**Translation retries:**
+- Default: 3 attempts with 2-second delay between retries
+- Configurable via `translator.max_translation_retries`
+- Handles transient API failures
+
+**Callback retries:**
+- Default: 5 attempts with exponential backoff [1s, 2s, 4s, 8s, 16s]
+- Configurable via `callback.max_retries` and `callback.retry_backoff_seconds`
+- Stops retrying on 4xx errors (client errors)
+- Continues retrying on 5xx errors (server errors) and network failures
 
 ### Rate Limiting
 
