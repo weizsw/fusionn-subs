@@ -22,6 +22,9 @@ redis:
 # ─────────────────────────────────────────────────────────────────────────────
 callback:
   url: "http://localhost:4664/api/v1/async_merge" # Endpoint for callback
+  max_retries: 5 # Maximum retry attempts for callback (default: 5)
+  retry_backoff_seconds: [1, 2, 4, 8, 16] # Backoff intervals in seconds
+  timeout: 15s # Timeout for each callback request (default: 15s)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # OPENROUTER - AI Translation Provider (Recommended)
@@ -71,4 +74,5 @@ openrouter:
 translator:
   target_language: "Chinese" # Target translation language
   output_suffix: "chs" # Suffix for translated file (e.g., movie.chs.srt)
+  max_translation_retries: 3 # Maximum retry attempts for translation (default: 3)
 

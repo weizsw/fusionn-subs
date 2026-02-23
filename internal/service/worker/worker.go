@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -22,8 +23,9 @@ const (
 )
 
 type Config struct {
-	Queue       string
-	PollTimeout time.Duration
+	Queue                 string
+	PollTimeout           time.Duration
+	MaxTranslationRetries int
 }
 
 type Worker struct {
@@ -94,11 +96,11 @@ func (w *Worker) processNext(ctx context.Context) error {
 		return nil // Bad message, don't retry
 	}
 
-	logger.Infof("📥 Message received: %s (%s)", msg.FileName, msg.Provider)
+	logger.Infof("📥 Message received: %s (%s) [job: %s]", msg.MediaTitle, msg.MediaType, msg.JobID)
 
 	// Process the job
 	if err := w.processJob(ctx, msg); err != nil {
-		logger.Errorf("❌ Job failed for %s: %v", msg.Path, err)
+		logger.Errorf("❌ Job failed for %s: %v", msg.SubtitlePath, err)
 		// Note: Message is already consumed. Consider implementing:
 		// - Dead letter queue for failed jobs
 		// - Retry with LPUSH back to queue
@@ -109,15 +111,54 @@ func (w *Worker) processNext(ctx context.Context) error {
 }
 
 func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
-	chsPath, err := w.translator.Translate(ctx, msg)
-	if err != nil {
-		return err
+	// Translate with retry logic
+	var chsPath string
+	var lastErr error
+	
+	maxRetries := w.cfg.MaxTranslationRetries
+	if maxRetries <= 0 {
+		maxRetries = 3 // Default
+	}
+	
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			logger.Infof("⏳ Translation retry %d/%d: job_id=%s", attempt-1, maxRetries-1, msg.JobID)
+		}
+		
+		var err error
+		chsPath, err = w.translator.Translate(ctx, msg)
+		if err == nil {
+			// Success
+			if attempt > 1 {
+				logger.Infof("✅ Translation succeeded on attempt %d", attempt)
+			}
+			break
+		}
+		
+		lastErr = err
+		logger.Warnf("Translation attempt %d failed: %v", attempt, err)
+		
+		// Don't wait after last attempt
+		if attempt < maxRetries {
+			// Simple fixed backoff for translation retries
+			select {
+			case <-time.After(2 * time.Second):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+	
+	if lastErr != nil {
+		logger.Errorf("❌ Translation failed after %d attempts: job_id=%s", maxRetries, msg.JobID)
+		return fmt.Errorf("translation failed after %d attempts: %w", maxRetries, lastErr)
 	}
 
 	payload := callback.Payload{
-		ChsSubtitlePath: chsPath,
-		EngSubtitlePath: msg.Path,
+		JobID:           msg.JobID,
 		VideoPath:       msg.VideoPath,
+		EngSubtitlePath: msg.SubtitlePath,
+		ChsSubtitlePath: chsPath,
 	}
 
 	if err := w.callback.Send(ctx, payload); err != nil {

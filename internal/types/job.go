@@ -7,16 +7,22 @@ import (
 )
 
 type JobMessage struct {
-	FileName  string `json:"file_name"`
-	Path      string `json:"path"`
-	VideoPath string `json:"video_path"`
-	Overview  string `json:"overview"`
-	Provider  string `json:"provider"`
+	JobID        string `json:"job_id"`
+	VideoPath    string `json:"video_path"`
+	SubtitlePath string `json:"subtitle_path"`
+	MediaTitle   string `json:"media_title"`
+	MediaType    string `json:"media_type"`
 }
 
 func (m JobMessage) Validate() error {
-	if strings.TrimSpace(m.Path) == "" {
-		return errors.New("message.path is required")
+	if strings.TrimSpace(m.JobID) == "" {
+		return errors.New("job_id is required")
+	}
+	if strings.TrimSpace(m.VideoPath) == "" {
+		return errors.New("video_path is required")
+	}
+	if strings.TrimSpace(m.SubtitlePath) == "" {
+		return errors.New("subtitle_path is required")
 	}
 
 	return nil
@@ -24,12 +30,12 @@ func (m JobMessage) Validate() error {
 
 func (m JobMessage) OutputPath(suffix string) string {
 	if suffix == "" {
-		return m.Path
+		return m.SubtitlePath
 	}
 
 	cleanSuffix := strings.TrimPrefix(suffix, ".")
 	if cleanSuffix == "" {
-		return m.Path
+		return m.SubtitlePath
 	}
 
 	replacement := cleanSuffix
@@ -37,23 +43,23 @@ func (m JobMessage) OutputPath(suffix string) string {
 		replacement = replacement[:dot]
 	}
 
-	lowerPath := strings.ToLower(m.Path)
+	lowerPath := strings.ToLower(m.SubtitlePath)
 	if idx := strings.LastIndex(lowerPath, ".eng"); idx != -1 {
-		prefix := m.Path[:idx+1]
-		suffixPart := m.Path[idx+4:]
+		prefix := m.SubtitlePath[:idx+1]
+		suffixPart := m.SubtitlePath[idx+4:]
 		return prefix + replacement + suffixPart
 	}
 
 	if strings.HasSuffix(lowerPath, ".srt") {
-		trimmed := m.Path[:len(m.Path)-len(".srt")]
-		return trimmed + "." + cleanSuffix
+		trimmed := m.SubtitlePath[:len(m.SubtitlePath)-len(".srt")]
+		return trimmed + "." + cleanSuffix + ".srt"
 	}
 
-	ext := filepath.Ext(m.Path)
+	ext := filepath.Ext(m.SubtitlePath)
 	if ext != "" {
-		base := strings.TrimSuffix(m.Path, ext)
+		base := strings.TrimSuffix(m.SubtitlePath, ext)
 		return base + "." + cleanSuffix + ext
 	}
 
-	return m.Path + "." + cleanSuffix
+	return m.SubtitlePath + "." + cleanSuffix
 }

@@ -114,12 +114,34 @@ func run() error {
 		}
 	}
 
-	callbackClient := callback.NewClient(cfg.Callback.URL, config.DefaultCallbackTimeout, config.DefaultCallbackMaxRetries)
-	logger.Infof("📤 Callback: %s", cfg.Callback.URL)
+	// Set default retry config if not provided
+	if cfg.Callback.MaxRetries == 0 {
+		cfg.Callback.MaxRetries = 5
+	}
+	if len(cfg.Callback.RetryBackoffSeconds) == 0 {
+		cfg.Callback.RetryBackoffSeconds = []int{1, 2, 4, 8, 16}
+	}
+	if cfg.Callback.Timeout == 0 {
+		cfg.Callback.Timeout = config.DefaultCallbackTimeout
+	}
+
+	callbackClient := callback.NewClient(
+		cfg.Callback.URL,
+		cfg.Callback.Timeout,
+		cfg.Callback.MaxRetries,
+		cfg.Callback.RetryBackoffSeconds,
+	)
+	logger.Infof("📤 Callback: %s (retries: %d)", cfg.Callback.URL, cfg.Callback.MaxRetries)
+
+	// Set default translator retry config if not provided
+	if cfg.Translator.MaxTranslationRetries == 0 {
+		cfg.Translator.MaxTranslationRetries = 3
+	}
 
 	workerSvc := worker.New(redisClient, worker.Config{
-		Queue:       cfg.Redis.Queue,
-		PollTimeout: config.DefaultWorkerPollTimeout,
+		Queue:                 cfg.Redis.Queue,
+		PollTimeout:           config.DefaultWorkerPollTimeout,
+		MaxTranslationRetries: cfg.Translator.MaxTranslationRetries,
 	}, translatorSvc, callbackClient)
 
 	logger.Info("")

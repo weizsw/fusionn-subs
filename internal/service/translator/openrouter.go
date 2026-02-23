@@ -95,15 +95,15 @@ func (t *OpenRouterTranslator) Translate(ctx context.Context, msg types.JobMessa
 
 	// Build args for llm-subtrans.sh (OpenRouter default)
 	args := []string{
-		msg.Path,
+		msg.SubtitlePath,
 		"-o", outputPath,
 		"-l", t.targetLanguage,
 		"--apikey", t.apiKey,
 		"--model", currentModel,
 	}
 
-	if overview := strings.TrimSpace(msg.Overview); overview != "" {
-		args = append(args, "-d", overview)
+	if mediaTitle := strings.TrimSpace(msg.MediaTitle); mediaTitle != "" {
+		args = append(args, "-d", mediaTitle)
 	}
 
 	if t.instruction != "" {
@@ -126,7 +126,7 @@ func (t *OpenRouterTranslator) Translate(ctx context.Context, msg types.JobMessa
 	// Pass API key via environment (security: not visible in process list)
 	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY="+t.apiKey)
 
-	logger.Infof("🔄 Starting translation (OpenRouter): %s → %s", msg.Path, outputPath)
+	logger.Infof("🔄 Starting translation (OpenRouter): %s → %s", msg.SubtitlePath, outputPath)
 	logger.Infof("📦 Model: %s", currentModel)
 	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
 

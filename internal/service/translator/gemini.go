@@ -63,7 +63,7 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) 
 
 	// Build args for gemini-subtrans.sh
 	args := []string{
-		msg.Path,
+		msg.SubtitlePath,
 		"-o", outputPath,
 		"-l", t.targetLanguage,
 		"-k", t.apiKey,
@@ -73,8 +73,8 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) 
 		args = append(args, "-m", t.model)
 	}
 
-	if overview := strings.TrimSpace(msg.Overview); overview != "" {
-		args = append(args, "-d", overview)
+	if mediaTitle := strings.TrimSpace(msg.MediaTitle); mediaTitle != "" {
+		args = append(args, "-d", mediaTitle)
 	}
 
 	if t.instruction != "" {
@@ -97,7 +97,7 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) 
 	// Pass API key via environment only (security: not visible in process list)
 	cmd.Env = append(os.Environ(), "GEMINI_API_KEY="+t.apiKey)
 
-	logger.Infof("🔄 Starting translation (Gemini): %s → %s", msg.Path, outputPath)
+	logger.Infof("🔄 Starting translation (Gemini): %s → %s", msg.SubtitlePath, outputPath)
 	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
 
 	return executeScript(cmd, outputPath)
