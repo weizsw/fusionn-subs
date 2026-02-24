@@ -74,7 +74,7 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) 
 	}
 
 	if mediaTitle := strings.TrimSpace(msg.MediaTitle); mediaTitle != "" {
-		args = append(args, "-d", mediaTitle)
+		args = append(args, "--moviename", mediaTitle)
 	}
 
 	if t.instruction != "" {

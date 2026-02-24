@@ -103,7 +103,7 @@ func (t *OpenRouterTranslator) Translate(ctx context.Context, msg types.JobMessa
 	}
 
 	if mediaTitle := strings.TrimSpace(msg.MediaTitle); mediaTitle != "" {
-		args = append(args, "-d", mediaTitle)
+		args = append(args, "--moviename", mediaTitle)
 	}
 
 	if t.instruction != "" {
