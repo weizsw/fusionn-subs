@@ -114,17 +114,17 @@ func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
 	// Translate with retry logic
 	var chsPath string
 	var lastErr error
-	
+
 	maxRetries := w.cfg.MaxTranslationRetries
 	if maxRetries <= 0 {
 		maxRetries = 3 // Default
 	}
-	
+
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		if attempt > 1 {
 			logger.Infof("⏳ Translation retry %d/%d: job_id=%s", attempt-1, maxRetries-1, msg.JobID)
 		}
-		
+
 		var err error
 		chsPath, err = w.translator.Translate(ctx, msg)
 		if err == nil {
@@ -134,10 +134,10 @@ func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
 			}
 			break
 		}
-		
+
 		lastErr = err
 		logger.Warnf("Translation attempt %d failed: %v", attempt, err)
-		
+
 		// Don't wait after last attempt
 		if attempt < maxRetries {
 			// Simple fixed backoff for translation retries
@@ -148,7 +148,7 @@ func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
 			}
 		}
 	}
-	
+
 	if lastErr != nil {
 		logger.Errorf("❌ Translation failed after %d attempts: job_id=%s", maxRetries, msg.JobID)
 		return fmt.Errorf("translation failed after %d attempts: %w", maxRetries, lastErr)

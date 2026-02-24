@@ -43,7 +43,7 @@ func NewClient(url string, timeout time.Duration, maxRetries int, retryBackoffSe
 
 func (c *Client) Send(ctx context.Context, payload Payload) error {
 	var lastErr error
-	
+
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
 			// Calculate backoff duration
@@ -52,22 +52,21 @@ func (c *Client) Send(ctx context.Context, payload Payload) error {
 				backoffIdx = len(c.retryBackoffSeconds) - 1
 			}
 			backoffDuration := time.Duration(c.retryBackoffSeconds[backoffIdx]) * time.Second
-			
+
 			logger.Infof("⏳ Callback retry %d/%d after %v: job_id=%s", attempt, c.maxRetries, backoffDuration, payload.JobID)
-			
+
 			select {
 			case <-time.After(backoffDuration):
 			case <-ctx.Done():
 				return ctx.Err()
 			}
 		}
-		
+
 		resp, err := c.http.R().
 			SetContext(ctx).
 			SetHeader("Content-Type", "application/json").
 			SetBody(payload).
 			Post(c.url)
-
 		if err != nil {
 			lastErr = fmt.Errorf("send callback: %w", err)
 			logger.Warnf("Callback attempt %d failed: %v", attempt+1, lastErr)
@@ -81,7 +80,7 @@ func (c *Client) Send(ctx context.Context, payload Payload) error {
 			}
 			lastErr = fmt.Errorf("callback failed: status %d, body: %s", resp.StatusCode(), body)
 			logger.Warnf("Callback attempt %d failed: %v", attempt+1, lastErr)
-			
+
 			// Don't retry on 4xx errors (client errors)
 			if resp.StatusCode() >= 400 && resp.StatusCode() < 500 {
 				return lastErr
