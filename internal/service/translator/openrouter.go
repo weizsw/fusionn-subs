@@ -124,7 +124,7 @@ func (t *OpenRouterTranslator) Translate(ctx context.Context, msg types.JobMessa
 	}
 
 	// Pass API key via environment (security: not visible in process list)
-	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY="+t.apiKey)
+	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY="+t.apiKey, "PYTHONUNBUFFERED=1")
 
 	logger.Infof("🔄 Starting translation (OpenRouter): %s → %s", msg.SubtitlePath, outputPath)
 	logger.Infof("📦 Model: %s", currentModel)

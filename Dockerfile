@@ -29,11 +29,15 @@ WORKDIR ${LLM_SUBTRANS_DIR}
 
 RUN set -e; printf "2\n\n2\n\n" | ./install.sh
 
+# Force unbuffered Python output so translation progress streams in real-time
+RUN sed -i 's|envsubtrans/bin/python |envsubtrans/bin/python -u |g' *.sh
+
 WORKDIR /app
 
 COPY --from=builder /app/fusionn-subs .
 
 ENV ENV=production
 ENV CONFIG_PATH=/app/config/config.yaml
+ENV PYTHONUNBUFFERED=1
 
 ENTRYPOINT ["/app/fusionn-subs"]

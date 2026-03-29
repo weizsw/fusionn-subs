@@ -116,7 +116,7 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) 
 		cmd.Dir = t.workDir
 	}
 
-	cmd.Env = append(os.Environ(), "GEMINI_API_KEY="+t.apiKey)
+	cmd.Env = append(os.Environ(), "GEMINI_API_KEY="+t.apiKey, "PYTHONUNBUFFERED=1")
 
 	logger.Infof("🔄 Starting translation (Gemini/%s): %s → %s", model.Name, msg.SubtitlePath, outputPath)
 	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
@@ -153,6 +153,26 @@ func (t *GeminiTranslator) ResetToPrimary() {
 	t.primaryExhausted = false
 	t.activeModel = &t.primaryModel
 	logger.Infof("🔄 Daily reset: switched back to primary model (%s)", t.primaryModel.Name)
+}
+
+func (t *GeminiTranslator) UpdateConfig(cfg config.GeminiConfig) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	wasPrimaryExhausted := t.primaryExhausted
+
+	t.apiKey = cfg.APIKey
+	t.instruction = cfg.Instruction
+	t.primaryModel = cfg.PrimaryModel
+	t.secondaryModel = cfg.SecondaryModel
+
+	if wasPrimaryExhausted {
+		t.activeModel = &t.secondaryModel
+	} else {
+		t.activeModel = &t.primaryModel
+	}
+
+	logger.Infof("🔄 Gemini config reloaded: primary=%s, secondary=%s", cfg.PrimaryModel.Name, cfg.SecondaryModel.Name)
 }
 
 func (t *GeminiTranslator) startDailyReset(ctx context.Context) {

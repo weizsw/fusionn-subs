@@ -13,6 +13,10 @@ type Translator interface {
 	Translate(ctx context.Context, msg types.JobMessage) (string, error)
 }
 
+type ConfigUpdater interface {
+	UpdateConfig(cfg config.GeminiConfig)
+}
+
 func NewTranslator(ctx context.Context, cfg *config.Config) (Translator, error) {
 	targetLang := cfg.Translator.TargetLanguage
 	outputSuffix := cfg.Translator.OutputSuffix
