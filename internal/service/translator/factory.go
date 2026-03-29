@@ -33,7 +33,7 @@ func NewTranslator(cfg *config.Config) (Translator, error) {
 
 	// Fall back to Gemini
 	if cfg.Gemini.APIKey != "" {
-		logger.Infof("🤖 Using Gemini translator (model: %s)", cfg.Gemini.Model)
+		logger.Infof("🤖 Using Gemini translator (model: %s)", cfg.Gemini.PrimaryModel.Name)
 		return NewGeminiTranslator(cfg.Gemini, targetLang, outputSuffix), nil
 	}
 
