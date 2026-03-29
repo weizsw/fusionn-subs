@@ -23,7 +23,7 @@ const (
 )
 
 // executeScript executes a script command and handles stdout/stderr streaming
-func executeScript(cmd *exec.Cmd, outputPath string) (resultPath string, combinedOutput string, err error) {
+func executeScript(cmd *exec.Cmd, outputPath string) (resultPath, combinedOutput string, err error) {
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", "", fmt.Errorf("stdout pipe: %w", err)
