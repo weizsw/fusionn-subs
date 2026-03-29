@@ -6,9 +6,8 @@
 # Environment variables can override any config value using the format:
 # FUSIONN_SUBS_<SECTION>_<KEY> (e.g., FUSIONN_SUBS_OPENROUTER_API_KEY)
 #
-# ⚠️  PROVIDER SELECTION: Configure EITHER openrouter OR gemini (not both)
-#     - OpenRouter: Access to 100+ models from multiple providers
-#     - Gemini: Direct Google Gemini API access
+# ⚠️  PROVIDER: Gemini is the primary translation provider (required API key and models).
+#     OpenRouter is optional and can be enabled as an alternative path when configured.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REDIS - Message queue for translation jobs
@@ -27,7 +26,7 @@ callback:
   timeout: 15s # Timeout for each callback request (default: 15s)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# OPENROUTER - AI Translation Provider (Recommended)
+# OPENROUTER - AI Translation Provider (Alternative (dormant))
 # ─────────────────────────────────────────────────────────────────────────────
 # Get API key from: https://openrouter.ai/
 # Access to 100+ models: OpenAI, Anthropic, Google, Meta, etc.
@@ -57,16 +56,22 @@ openrouter:
     schedule_hour: 3 # Hour (0-23) for daily evaluation (respects TZ env var, default: 3 AM local time)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GEMINI - AI Translation Provider (Alternative)
+# GEMINI - AI Translation Provider (Primary)
 # ─────────────────────────────────────────────────────────────────────────────
 # Get API key from: https://aistudio.google.com/apikey
-# Direct Gemini API access (if you prefer not to use OpenRouter)
-# gemini:
-#   api_key: ""                       # REQUIRED - Gemini API key
-#   model: "gemini-2.5-flash-latest"  # Model to use
-#   instruction: ""                   # Custom instruction for translation style (optional)
-#   max_batch_size: 20                # Max subtitles per batch (tune for performance)
-#   rate_limit: 8                     # Requests per minute (depends on your Gemini plan)
+# Uses primary model by default. Automatically falls back to secondary model
+# when primary hits its daily rate limit (429). Resets at midnight Pacific.
+gemini:
+  api_key: ""                         # REQUIRED - Gemini API key
+  instruction: ""                     # Custom instruction for translation style (optional)
+  primary_model:
+    name: "gemini-2.5-flash"          # Primary model (used first)
+    rate_limit: 8                     # Requests per minute
+    max_batch_size: 20                # Max subtitles per batch
+  secondary_model:
+    name: "gemini-2.5-pro"            # Fallback model (used when primary is rate-limited)
+    rate_limit: 5                     # Requests per minute
+    max_batch_size: 15                # Max subtitles per batch
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TRANSLATOR - Output settings
