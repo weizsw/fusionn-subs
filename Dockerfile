@@ -27,7 +27,7 @@ RUN git clone --depth 1 https://github.com/machinewrapped/llm-subtrans.git ${LLM
 
 WORKDIR ${LLM_SUBTRANS_DIR}
 
-RUN set -e; printf "2\n\n0\n" | ./install.sh
+RUN set -e; printf "2\n\n2\n\n" | ./install.sh
 
 WORKDIR /app
 
