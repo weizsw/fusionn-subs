@@ -128,7 +128,6 @@ func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
 		var err error
 		chsPath, err = w.translator.Translate(ctx, msg)
 		if err == nil {
-			// Success
 			if attempt > 1 {
 				logger.Infof("✅ Translation succeeded on attempt %d", attempt)
 			}
@@ -138,9 +137,11 @@ func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
 		lastErr = err
 		logger.Warnf("Translation attempt %d failed: %v", attempt, err)
 
-		// Don't wait after last attempt
-		if attempt < maxRetries {
-			// Simple fixed backoff for translation retries
+		if errors.Is(err, translator.ErrAllModelsExhausted) {
+			break
+		}
+
+		if attempt < maxRetries && !errors.Is(err, translator.ErrRateLimited) {
 			select {
 			case <-time.After(2 * time.Second):
 			case <-ctx.Done():
@@ -150,6 +151,10 @@ func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
 	}
 
 	if lastErr != nil {
+		if errors.Is(lastErr, translator.ErrAllModelsExhausted) {
+			logger.Errorf("❌ All Gemini models exhausted for today: job_id=%s", msg.JobID)
+			return fmt.Errorf("all Gemini models exhausted for today: %w", lastErr)
+		}
 		logger.Errorf("❌ Translation failed after %d attempts: job_id=%s", maxRetries, msg.JobID)
 		return fmt.Errorf("translation failed after %d attempts: %w", maxRetries, lastErr)
 	}
