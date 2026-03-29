@@ -9,19 +9,20 @@ import (
 	"github.com/fusionn-subs/pkg/logger"
 )
 
-// Translator interface for subtitle translation
 type Translator interface {
 	Translate(ctx context.Context, msg types.JobMessage) (string, error)
 }
 
-// NewTranslator creates a translator based on the provided configuration.
-// It selects OpenRouter if configured, otherwise falls back to Gemini.
-// If OpenRouter auto-selection is enabled, the model will be set by the ModelSelector.
-func NewTranslator(cfg *config.Config) (Translator, error) {
+func NewTranslator(ctx context.Context, cfg *config.Config) (Translator, error) {
 	targetLang := cfg.Translator.TargetLanguage
 	outputSuffix := cfg.Translator.OutputSuffix
 
-	// Prefer OpenRouter if configured
+	if cfg.Gemini.APIKey != "" {
+		logger.Infof("🤖 Using Gemini translator (primary: %s, secondary: %s)",
+			cfg.Gemini.PrimaryModel.Name, cfg.Gemini.SecondaryModel.Name)
+		return NewGeminiTranslator(ctx, cfg.Gemini, targetLang, outputSuffix), nil
+	}
+
 	if cfg.OpenRouter.APIKey != "" {
 		if cfg.OpenRouter.AutoSelectModel {
 			logger.Infof("🤖 Using OpenRouter translator (auto-selection enabled)")
@@ -31,11 +32,5 @@ func NewTranslator(cfg *config.Config) (Translator, error) {
 		return NewOpenRouterTranslator(cfg.OpenRouter, targetLang, outputSuffix), nil
 	}
 
-	// Fall back to Gemini
-	if cfg.Gemini.APIKey != "" {
-		logger.Infof("🤖 Using Gemini translator (model: %s)", cfg.Gemini.PrimaryModel.Name)
-		return NewGeminiTranslator(cfg.Gemini, targetLang, outputSuffix), nil
-	}
-
-	return nil, fmt.Errorf("no translator configured: either openrouter.api_key or gemini.api_key required")
+	return nil, fmt.Errorf("no translator configured: gemini.api_key is required")
 }

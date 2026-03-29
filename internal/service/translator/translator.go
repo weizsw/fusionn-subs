@@ -23,20 +23,19 @@ const (
 )
 
 // executeScript executes a script command and handles stdout/stderr streaming
-func executeScript(cmd *exec.Cmd, outputPath string) (string, error) {
+func executeScript(cmd *exec.Cmd, outputPath string) (resultPath string, combinedOutput string, err error) {
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", fmt.Errorf("stdout pipe: %w", err)
+		return "", "", fmt.Errorf("stdout pipe: %w", err)
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return "", fmt.Errorf("stderr pipe: %w", err)
+		return "", "", fmt.Errorf("stderr pipe: %w", err)
 	}
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 	var wg sync.WaitGroup
 
-	// Stream output in dim/grey (like Docker build logs)
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
@@ -48,7 +47,7 @@ func executeScript(cmd *exec.Cmd, outputPath string) (string, error) {
 	}()
 
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("start script: %w", err)
+		return "", "", fmt.Errorf("start script: %w", err)
 	}
 
 	wg.Wait()
@@ -56,27 +55,28 @@ func executeScript(cmd *exec.Cmd, outputPath string) (string, error) {
 
 	stdoutStr := strings.TrimSpace(stdoutBuf.String())
 	stderrStr := strings.TrimSpace(stderrBuf.String())
+	combined := stdoutStr + "\n" + stderrStr
 
 	if err != nil {
 		logger.Errorf("Translation failed: %v", err)
 		if stderrStr != "" {
 			logger.Errorf("Script stderr: %s", stderrStr)
 		}
-		return "", fmt.Errorf("script failed: %w", err)
+		return "", combined, fmt.Errorf("script failed: %w", err)
 	}
 
 	if _, statErr := os.Stat(outputPath); statErr != nil {
 		logger.Errorf("Output file not found after script completed")
-		return "", fmt.Errorf("output not found: %w", statErr)
+		return "", combined, fmt.Errorf("output not found: %w", statErr)
 	}
 
 	if reason, failed := detectScriptFailure(stdoutStr, stderrStr); failed {
 		logger.Errorf("Script failure detected: %s", reason)
-		return "", fmt.Errorf("script reported failure: %s", reason)
+		return "", combined, fmt.Errorf("script reported failure: %s", reason)
 	}
 
 	logger.Infof("✅ Translation completed: %s", outputPath)
-	return outputPath, nil
+	return outputPath, combined, nil
 }
 
 func buildCommandLine(cmd string, args []string) string {
