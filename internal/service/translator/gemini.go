@@ -41,10 +41,10 @@ func NewGeminiTranslator(cfg config.GeminiConfig, targetLang, outputSuffix strin
 		scriptPath:     scriptPath,
 		workDir:        workDir,
 		apiKey:         cfg.APIKey,
-		model:          cfg.Model,
+		model:          cfg.PrimaryModel.Name,
 		instruction:    cfg.Instruction,
-		maxBatchSize:   cfg.MaxBatchSize,
-		rateLimit:      cfg.RateLimit,
+		maxBatchSize:   cfg.PrimaryModel.MaxBatchSize,
+		rateLimit:      cfg.PrimaryModel.RateLimit,
 		targetLanguage: targetLang,
 		outputSuffix:   outputSuffix,
 	}
