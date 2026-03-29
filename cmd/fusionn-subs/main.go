@@ -45,6 +45,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("config error: %w", err)
 	}
+	defer cfgMgr.Stop()
 	cfg := cfgMgr.Get()
 
 	// Log config values (masked)
@@ -92,6 +93,12 @@ func run() error {
 	// Set default translator retry config if not provided
 	if cfg.Translator.MaxTranslationRetries == 0 {
 		cfg.Translator.MaxTranslationRetries = 3
+	}
+
+	if updater, ok := translatorSvc.(translator.ConfigUpdater); ok {
+		cfgMgr.OnChange(func(old, new *config.Config) {
+			updater.UpdateConfig(new.Gemini)
+		})
 	}
 
 	workerSvc := worker.New(redisClient, worker.Config{
