@@ -130,5 +130,6 @@ func (t *OpenRouterTranslator) Translate(ctx context.Context, msg types.JobMessa
 	logger.Infof("📦 Model: %s", currentModel)
 	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
 
-	return executeScript(cmd, outputPath)
+	resultPath, _, err := executeScript(cmd, outputPath)
+	return resultPath, err
 }

@@ -7,27 +7,40 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/fusionn-subs/internal/config"
 	"github.com/fusionn-subs/internal/types"
 	"github.com/fusionn-subs/pkg/logger"
 )
 
-// GeminiTranslator implements translation using Gemini API via gemini-subtrans.sh
+var pacificTZ *time.Location
+
+func init() {
+	var err error
+	pacificTZ, err = time.LoadLocation("America/Los_Angeles")
+	if err != nil {
+		panic(fmt.Sprintf("failed to load America/Los_Angeles timezone: %v (ensure tzdata is installed)", err))
+	}
+}
+
 type GeminiTranslator struct {
 	scriptPath     string
 	workDir        string
 	apiKey         string
-	model          string
 	instruction    string
-	maxBatchSize   int
-	rateLimit      int
 	targetLanguage string
 	outputSuffix   string
+
+	mu               sync.RWMutex
+	primaryModel     config.GeminiModelConfig
+	secondaryModel   config.GeminiModelConfig
+	activeModel      *config.GeminiModelConfig
+	primaryExhausted bool
 }
 
-// NewGeminiTranslator creates a new Gemini translator
-func NewGeminiTranslator(cfg config.GeminiConfig, targetLang, outputSuffix string) *GeminiTranslator {
+func NewGeminiTranslator(ctx context.Context, cfg config.GeminiConfig, targetLang, outputSuffix string) *GeminiTranslator {
 	scriptPath := os.Getenv("GEMINI_SCRIPT_PATH")
 	if scriptPath == "" {
 		scriptPath = "/opt/llm-subtrans/gemini-subtrans.sh"
@@ -37,20 +50,25 @@ func NewGeminiTranslator(cfg config.GeminiConfig, targetLang, outputSuffix strin
 		workDir = "/opt/llm-subtrans"
 	}
 
-	return &GeminiTranslator{
+	t := &GeminiTranslator{
 		scriptPath:     scriptPath,
 		workDir:        workDir,
 		apiKey:         cfg.APIKey,
-		model:          cfg.PrimaryModel.Name,
 		instruction:    cfg.Instruction,
-		maxBatchSize:   cfg.PrimaryModel.MaxBatchSize,
-		rateLimit:      cfg.PrimaryModel.RateLimit,
 		targetLanguage: targetLang,
 		outputSuffix:   outputSuffix,
+		primaryModel:   cfg.PrimaryModel,
+		secondaryModel: cfg.SecondaryModel,
 	}
+	t.activeModel = &t.primaryModel
+
+	logger.Infof("🤖 Gemini translator: primary=%s, secondary=%s", cfg.PrimaryModel.Name, cfg.SecondaryModel.Name)
+
+	t.startDailyReset(ctx)
+
+	return t
 }
 
-// Translate translates subtitles using Gemini
 func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) (string, error) {
 	if err := msg.Validate(); err != nil {
 		return "", fmt.Errorf("invalid message: %w", err)
@@ -58,10 +76,14 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) 
 
 	outputPath := msg.OutputPath(t.outputSuffix)
 
+	t.mu.RLock()
+	model := *t.activeModel
+	isPrimary := !t.primaryExhausted
+	t.mu.RUnlock()
+
 	ctxTimeout, cancel := context.WithTimeout(ctx, config.DefaultGeminiTimeout)
 	defer cancel()
 
-	// Build args for gemini-subtrans.sh
 	args := []string{
 		msg.SubtitlePath,
 		"-o", outputPath,
@@ -69,8 +91,8 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) 
 		"-k", t.apiKey,
 	}
 
-	if t.model != "" {
-		args = append(args, "-m", t.model)
+	if model.Name != "" {
+		args = append(args, "-m", model.Name)
 	}
 
 	if mediaTitle := strings.TrimSpace(msg.MediaTitle); mediaTitle != "" {
@@ -81,12 +103,12 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) 
 		args = append(args, "--instruction", t.instruction)
 	}
 
-	if t.rateLimit > 0 {
-		args = append(args, "--ratelimit", strconv.Itoa(t.rateLimit))
+	if model.RateLimit > 0 {
+		args = append(args, "--ratelimit", strconv.Itoa(model.RateLimit))
 	}
 
-	if t.maxBatchSize > 0 {
-		args = append(args, "--maxbatchsize", strconv.Itoa(t.maxBatchSize))
+	if model.MaxBatchSize > 0 {
+		args = append(args, "--maxbatchsize", strconv.Itoa(model.MaxBatchSize))
 	}
 
 	cmd := exec.CommandContext(ctxTimeout, t.scriptPath, args...)
@@ -94,11 +116,85 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) 
 		cmd.Dir = t.workDir
 	}
 
-	// Pass API key via environment only (security: not visible in process list)
 	cmd.Env = append(os.Environ(), "GEMINI_API_KEY="+t.apiKey)
 
-	logger.Infof("🔄 Starting translation (Gemini): %s → %s", msg.SubtitlePath, outputPath)
+	logger.Infof("🔄 Starting translation (Gemini/%s): %s → %s", model.Name, msg.SubtitlePath, outputPath)
 	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
 
-	return executeScript(cmd, outputPath)
+	resultPath, combinedOutput, err := executeScript(cmd, outputPath)
+	if err != nil {
+		os.Remove(outputPath)
+
+		if isRateLimitError(combinedOutput) {
+			if isPrimary {
+				t.switchToSecondary()
+				return "", fmt.Errorf("%w: %s exhausted, switched to %s", ErrRateLimited, model.Name, t.secondaryModel.Name)
+			}
+			return "", fmt.Errorf("%w: %s also exhausted", ErrAllModelsExhausted, model.Name)
+		}
+
+		return "", err
+	}
+
+	return resultPath, nil
+}
+
+func (t *GeminiTranslator) switchToSecondary() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.primaryExhausted = true
+	t.activeModel = &t.secondaryModel
+	logger.Infof("⚠️ Primary model rate-limited, switching to secondary: %s", t.secondaryModel.Name)
+}
+
+func (t *GeminiTranslator) ResetToPrimary() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.primaryExhausted = false
+	t.activeModel = &t.primaryModel
+	logger.Infof("🔄 Daily reset: switched back to primary model (%s)", t.primaryModel.Name)
+}
+
+func (t *GeminiTranslator) startDailyReset(ctx context.Context) {
+	go func() {
+		for {
+			now := time.Now().In(pacificTZ)
+			nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, pacificTZ)
+			timer := time.NewTimer(time.Until(nextMidnight))
+
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+				t.ResetToPrimary()
+			}
+		}
+	}()
+}
+
+func isRateLimitError(output string) bool {
+	lower := strings.ToLower(output)
+
+	geminiIndicators := []string{
+		"resource_exhausted",
+		"quota exceeded",
+	}
+	for _, ind := range geminiIndicators {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+
+	genericIndicators := []string{
+		"429 too many requests",
+		"429 resource exhausted",
+		"rate limit exceeded",
+	}
+	for _, ind := range genericIndicators {
+		if strings.Contains(lower, ind) {
+			return true
+		}
+	}
+	return false
 }

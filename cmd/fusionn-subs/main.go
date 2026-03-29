@@ -62,8 +62,11 @@ func run() error {
 		}
 	}()
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// Initialize services
-	translatorSvc, err := translator.NewTranslator(cfg)
+	translatorSvc, err := translator.NewTranslator(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("translator error: %w", err)
 	}
@@ -148,10 +151,6 @@ func run() error {
 	logger.Info("────────────────────────────────────────────")
 	logger.Infof("✅ Ready! Listening on queue: %s", cfg.Redis.Queue)
 	logger.Info("────────────────────────────────────────────")
-
-	// Setup graceful shutdown
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	// Cleanup model selector on shutdown
 	if modelSelector != nil {
