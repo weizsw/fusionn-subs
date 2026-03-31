@@ -14,7 +14,7 @@ type Translator interface {
 }
 
 type ConfigUpdater interface {
-	UpdateConfig(cfg config.GeminiConfig)
+	UpdateFromConfig(cfg *config.Config)
 }
 
 func NewTranslator(ctx context.Context, cfg *config.Config) (Translator, error) {
