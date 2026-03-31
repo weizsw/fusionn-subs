@@ -5,7 +5,7 @@
 
 ## Problem
 
-fusionn-subs currently supports two translation backends (Gemini and OpenRouter), both requiring external API keys. The selection logic is implicit: Gemini if its key is set, else OpenRouter. There is no way to use a local OpenAI-compatible LLM server, and no way to configure a fallback chain between providers.
+fusionn-subs currently supports two translation backends (Gemini and OpenRouter), both requiring external API keys. The selection logic is implicit — Gemini if its key is set, else OpenRouter — but validation always requires `gemini.api_key`, so OpenRouter-only isn't actually possible without the new `providers` field. There is no way to use a local OpenAI-compatible LLM server, and no way to configure a fallback chain between providers.
 
 ## Goals
 
@@ -30,9 +30,9 @@ translator:
   max_translation_retries: 3
 ```
 
-Valid provider names: `"gemini"`, `"openrouter"`, `"local_llm"`.
+Valid provider names: `"gemini"`, `"openrouter"`, `"local_llm"`. Unknown names, empty strings, and duplicates are rejected at validation time.
 
-**Backwards compatibility:** If `providers` is empty or unset, the system uses the legacy implicit logic (Gemini if key set, else OpenRouter, else error). Existing configs continue to work without changes.
+**Backwards compatibility:** If `providers` is empty or unset, the system uses the legacy implicit logic (requires `gemini.api_key`, OpenRouter optional). Existing configs continue to work without changes. Setting `providers` enables the new validation path and unlocks OpenRouter-only or local-LLM-only deployments.
 
 #### New `local_llm` config section
 
@@ -65,8 +65,8 @@ Defaults: `endpoint` defaults to `/v1/chat/completions`, `rate_limit` to `10`, `
 
 - Holds `baseURL`, `apiKey`, `model`, `endpoint`, `instruction`, `rateLimit`, `maxBatchSize`, `scriptPath`, `workDir`.
 - `scriptPath` and `workDir` reuse the same env vars as OpenRouter (`LLM_SUBTRANS_SCRIPT_PATH` / `LLM_SUBTRANS_DIR`) since they point to the same llm-subtrans installation.
-- `Translate()` builds CLI args for Custom Server mode and calls `executeScript()`.
-- Implements `UpdateConfig(cfg config.LocalLLMConfig)` for hot-reload.
+- `Translate()` builds CLI args for Custom Server mode and calls `executeScript()`. Removes partial output files on error.
+- Implements `UpdateFromConfig(cfg *config.Config)` for hot-reload (reads `cfg.LocalLLM`).
 
 CLI command constructed:
 ```
@@ -110,13 +110,14 @@ llm-subtrans.sh <subtitle_path> -o <output> -l <target_lang> \
    ```
 
 4. Update `Validate()`:
+   - Reject unknown provider names, empty strings, and duplicates in `Providers`.
    - If `Providers` is non-empty, only validate config sections for listed providers.
    - `"gemini"` in list → require `gemini.api_key` and model names.
    - `"openrouter"` in list → require `openrouter.api_key` and model.
    - `"local_llm"` in list → require `local_llm.base_url`.
    - If `Providers` is empty, keep current validation (Gemini required).
 
-5. Update `SafeLogValues()` to include `local_llm.*` entries, mask `local_llm.api_key`.
+5. Update `SafeLogValues()` to include `local_llm.*` entries, mask `local_llm.api_key`, and add `translator.providers`.
 
 #### `internal/service/translator/factory.go`
 
@@ -160,24 +161,48 @@ The `FallbackTranslator.Translate()` method:
 
 1. Calls provider 1's `Translate()`.
 2. If it succeeds, return the result.
-3. If it fails, log a warning (`"Provider X failed: <err>, trying next..."`).
-4. Call provider 2's `Translate()`.
+3. If it fails, check the error type before deciding next action:
+   - **`ErrRateLimited`**: Do **not** fall through to the next provider. Return the error directly so the worker can retry the same provider (this preserves Gemini's internal primary→secondary model switch logic, which returns `ErrRateLimited` after switching models and expects an immediate retry).
+   - **`ErrAllModelsExhausted`**: Fall through to the next provider — this means the current provider has exhausted all its internal options.
+   - **All other errors**: Fall through to the next provider with a warning log.
+4. Call provider 2's `Translate()` (same rules apply).
 5. Continue until success or all providers exhausted.
 6. If all fail, return `fmt.Errorf("all providers failed, last error: %w", lastErr)`.
 
-The worker's existing retry logic (up to `max_translation_retries`) wraps the entire fallback chain. Each retry goes through the full chain again. `ErrAllModelsExhausted` from Gemini's primary/secondary logic still works within Gemini's translator -- the fallback chain catches it and tries the next provider.
+The worker's existing retry logic (up to `max_translation_retries`) wraps the entire fallback chain. Each retry goes through the full chain again. The `ErrRateLimited` passthrough ensures Gemini's primary→secondary switch works correctly within the chain before exhaustion triggers fallback.
+
+### Output File Cleanup
+
+All translators must remove partial output files on failure (matching Gemini's existing behavior). `LocalLLMTranslator.Translate()` calls `os.Remove(outputPath)` on error, same as `GeminiTranslator`. This prevents stale files from confusing the next provider in the fallback chain, which writes to the same output path.
 
 ### Hot-Reload
 
-- `LocalLLMTranslator.UpdateConfig(cfg LocalLLMConfig)` updates base_url, api_key, model, endpoint, etc.
-- `FallbackTranslator` holds references to its child translators. On config change, `main.go`'s callback iterates and updates each.
-- A general `ConfigReloader` interface or type-assertion approach keeps this extensible.
+Replace the Gemini-specific `ConfigUpdater` interface with a general one:
+
+```go
+type ConfigUpdater interface {
+    UpdateFromConfig(cfg *config.Config)
+}
+```
+
+Each translator implements `UpdateFromConfig` and reads only the fields it cares about:
+- `GeminiTranslator.UpdateFromConfig(cfg)` → reads `cfg.Gemini` (replaces current `UpdateConfig(GeminiConfig)`).
+- `LocalLLMTranslator.UpdateFromConfig(cfg)` → reads `cfg.LocalLLM`.
+- `OpenRouterTranslator` does not need full config reload currently (only model updates via `UpdateModel`), but can adopt the interface if needed.
+
+`FallbackTranslator` implements `ConfigUpdater` by iterating its child translators and calling `UpdateFromConfig` on each that implements the interface.
+
+`main.go`'s `OnChange` callback simplifies to a single type assertion on `ConfigUpdater` (same as today, just broader).
 
 ### Error Handling
 
 - Local LLM server unreachable → llm-subtrans script fails → triggers fallback to next provider.
-- Rate limit errors from local LLM → same fallback behavior.
+- Rate limit errors → `ErrRateLimited` propagated to worker for retry (does not trigger fallback). `ErrAllModelsExhausted` triggers fallback.
 - Script errors (Python traceback, etc.) → caught by existing `detectScriptFailure()`.
+
+### Log Masking
+
+The existing `maskAPIKeyInCommand` masks `-k` flag values. The local LLM translator also uses `-k` for its API key, so the existing masking works. No changes needed.
 
 ## Out of Scope
 
