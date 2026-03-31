@@ -19,7 +19,7 @@ type ConfigUpdater interface {
 }
 
 type namedTranslator struct {
-	name         string
+	name       string
 	translator Translator
 }
 
