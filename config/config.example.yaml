@@ -6,8 +6,9 @@
 # Environment variables can override any config value using the format:
 # FUSIONN_SUBS_<SECTION>_<KEY> (e.g., FUSIONN_SUBS_OPENROUTER_API_KEY)
 #
-# ⚠️  PROVIDER: Gemini is the primary translation provider (required API key and models).
-#     OpenRouter is optional and can be enabled as an alternative path when configured.
+# ⚠️  PROVIDERS: Set translator.providers to choose translation providers.
+#     If omitted, Gemini is the primary provider (requires API key and models).
+#     OpenRouter is optional. Local LLM can be used with any OpenAI-compatible server.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REDIS - Message queue for translation jobs
@@ -74,9 +75,26 @@ gemini:
     max_batch_size: 15                # Max subtitles per batch
 
 # ─────────────────────────────────────────────────────────────────────────────
+# LOCAL LLM - OpenAI-compatible local server (e.g., LM Studio, Ollama, vLLM)
+# ─────────────────────────────────────────────────────────────────────────────
+# Uses llm-subtrans Custom Server mode.
+# Only required when "local_llm" appears in translator.providers.
+local_llm:
+  base_url: "http://127.0.0.1:8045"         # REQUIRED - Server address
+  api_key: ""                                 # API key (optional for local servers)
+  model: "gemini-3-flash"                     # Model name to request
+  endpoint: "/v1/chat/completions"            # API endpoint (default: /v1/chat/completions)
+  instruction: ""                             # Custom translation instruction (optional)
+  rate_limit: 10                              # Requests per minute (default: 10)
+  max_batch_size: 20                          # Max subtitles per batch (default: 20)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # TRANSLATOR - Output settings
 # ─────────────────────────────────────────────────────────────────────────────
 translator:
+  # providers: ["local_llm", "gemini"]  # Ordered fallback chain (optional)
+  # Valid: "gemini", "openrouter", "local_llm". Tries in order; falls back on failure.
+  # If omitted, uses legacy behavior: Gemini (required), OpenRouter (optional).
   target_language: "Chinese" # Target translation language
   output_suffix: "chs" # Suffix for translated file (e.g., movie.chs.srt)
   max_translation_retries: 3 # Maximum retry attempts for translation (default: 3)
