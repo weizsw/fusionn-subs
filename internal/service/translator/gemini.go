@@ -155,16 +155,17 @@ func (t *GeminiTranslator) ResetToPrimary() {
 	logger.Infof("🔄 Daily reset: switched back to primary model (%s)", t.primaryModel.Name)
 }
 
-func (t *GeminiTranslator) UpdateConfig(cfg config.GeminiConfig) {
+func (t *GeminiTranslator) UpdateFromConfig(cfg *config.Config) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	geminiCfg := cfg.Gemini
 	wasPrimaryExhausted := t.primaryExhausted
 
-	t.apiKey = cfg.APIKey
-	t.instruction = cfg.Instruction
-	t.primaryModel = cfg.PrimaryModel
-	t.secondaryModel = cfg.SecondaryModel
+	t.apiKey = geminiCfg.APIKey
+	t.instruction = geminiCfg.Instruction
+	t.primaryModel = geminiCfg.PrimaryModel
+	t.secondaryModel = geminiCfg.SecondaryModel
 
 	if wasPrimaryExhausted {
 		t.activeModel = &t.secondaryModel
@@ -172,7 +173,7 @@ func (t *GeminiTranslator) UpdateConfig(cfg config.GeminiConfig) {
 		t.activeModel = &t.primaryModel
 	}
 
-	logger.Infof("🔄 Gemini config reloaded: primary=%s, secondary=%s", cfg.PrimaryModel.Name, cfg.SecondaryModel.Name)
+	logger.Infof("🔄 Gemini config reloaded: primary=%s, secondary=%s", geminiCfg.PrimaryModel.Name, geminiCfg.SecondaryModel.Name)
 }
 
 func (t *GeminiTranslator) startDailyReset(ctx context.Context) {

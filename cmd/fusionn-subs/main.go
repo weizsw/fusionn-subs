@@ -97,7 +97,7 @@ func run() error {
 
 	if updater, ok := translatorSvc.(translator.ConfigUpdater); ok {
 		cfgMgr.OnChange(func(old, new *config.Config) {
-			updater.UpdateConfig(new.Gemini)
+			updater.UpdateFromConfig(new)
 		})
 	}
 
