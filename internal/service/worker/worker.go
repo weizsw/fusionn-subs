@@ -152,8 +152,8 @@ func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
 
 	if lastErr != nil {
 		if errors.Is(lastErr, translator.ErrAllModelsExhausted) {
-			logger.Errorf("❌ All Gemini models exhausted for today: job_id=%s", msg.JobID)
-			return fmt.Errorf("all Gemini models exhausted for today: %w", lastErr)
+			logger.Errorf("❌ All models exhausted: job_id=%s", msg.JobID)
+			return fmt.Errorf("all models exhausted: %w", lastErr)
 		}
 		logger.Errorf("❌ Translation failed after %d attempts: job_id=%s", maxRetries, msg.JobID)
 		return fmt.Errorf("translation failed after %d attempts: %w", maxRetries, lastErr)
