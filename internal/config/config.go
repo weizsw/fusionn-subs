@@ -27,6 +27,7 @@ type Config struct {
 	Callback   CallbackConfig   `mapstructure:"callback"`
 	Gemini     GeminiConfig     `mapstructure:"gemini"`
 	OpenRouter OpenRouterConfig `mapstructure:"openrouter"`
+	LocalLLM   LocalLLMConfig   `mapstructure:"local_llm"`
 	Translator TranslatorConfig `mapstructure:"translator"`
 }
 
@@ -65,6 +66,16 @@ type OpenRouterConfig struct {
 	Evaluator       EvaluatorConfig `mapstructure:"evaluator"`
 }
 
+type LocalLLMConfig struct {
+	BaseURL      string `mapstructure:"base_url"`
+	APIKey       string `mapstructure:"api_key"`
+	Model        string `mapstructure:"model"`
+	Endpoint     string `mapstructure:"endpoint"`
+	Instruction  string `mapstructure:"instruction"`
+	RateLimit    int    `mapstructure:"rate_limit"`
+	MaxBatchSize int    `mapstructure:"max_batch_size"`
+}
+
 type EvaluatorConfig struct {
 	Provider     string `mapstructure:"provider"`
 	GeminiAPIKey string `mapstructure:"gemini_api_key"`
@@ -73,9 +84,16 @@ type EvaluatorConfig struct {
 }
 
 type TranslatorConfig struct {
-	TargetLanguage        string `mapstructure:"target_language"`
-	OutputSuffix          string `mapstructure:"output_suffix"`
-	MaxTranslationRetries int    `mapstructure:"max_translation_retries"`
+	Providers             []string `mapstructure:"providers"`
+	TargetLanguage        string   `mapstructure:"target_language"`
+	OutputSuffix          string   `mapstructure:"output_suffix"`
+	MaxTranslationRetries int      `mapstructure:"max_translation_retries"`
+}
+
+var validProviders = map[string]bool{
+	"gemini":     true,
+	"openrouter": true,
+	"local_llm":  true,
 }
 
 // ChangeCallback is called when config changes. Receives old and new config.
@@ -222,6 +240,45 @@ func (m *Manager) reload() {
 	}
 }
 
+func validateGeminiSection(c *Config) error {
+	switch {
+	case c.Gemini.APIKey == "":
+		return fmt.Errorf("gemini.api_key is required")
+	case c.Gemini.PrimaryModel.Name == "":
+		return fmt.Errorf("gemini.primary_model.name is required")
+	case c.Gemini.SecondaryModel.Name == "":
+		return fmt.Errorf("gemini.secondary_model.name is required")
+	case c.Gemini.PrimaryModel.Name == c.Gemini.SecondaryModel.Name:
+		return fmt.Errorf("gemini.primary_model.name and gemini.secondary_model.name must be different")
+	}
+	return nil
+}
+
+func (c *Config) validateOpenRouterAutoSelectModel() error {
+	if c.OpenRouter.APIKey == "" {
+		return fmt.Errorf("openrouter.api_key is required when auto_select_model is enabled")
+	}
+	if c.OpenRouter.Model == "" {
+		return fmt.Errorf("openrouter.model is required when auto_select_model is enabled (used as fallback)")
+	}
+	if c.OpenRouter.Evaluator.Provider == "" {
+		return fmt.Errorf("openrouter.evaluator.provider is required when auto_select_model is enabled")
+	}
+	if c.OpenRouter.Evaluator.Provider != "gemini" {
+		return fmt.Errorf("only 'gemini' is supported as evaluator.provider")
+	}
+	if c.OpenRouter.Evaluator.GeminiAPIKey == "" && c.Gemini.APIKey == "" {
+		return fmt.Errorf("either openrouter.evaluator.gemini_api_key or gemini.api_key is required when auto_select_model is enabled")
+	}
+	if c.OpenRouter.Evaluator.ScheduleHour < 0 || c.OpenRouter.Evaluator.ScheduleHour > 23 {
+		c.OpenRouter.Evaluator.ScheduleHour = 3
+	}
+	if c.OpenRouter.Evaluator.Model == "" {
+		c.OpenRouter.Evaluator.Model = "gemini-3-flash"
+	}
+	return nil
+}
+
 // Validate checks required config fields.
 func (c *Config) Validate() error {
 	switch {
@@ -231,6 +288,55 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("redis.queue is required")
 	case c.Callback.URL == "":
 		return fmt.Errorf("callback.url is required")
+	}
+
+	if len(c.Translator.Providers) > 0 {
+		trimmed := make([]string, len(c.Translator.Providers))
+		for i, p := range c.Translator.Providers {
+			trimmed[i] = strings.TrimSpace(p)
+		}
+		seen := make(map[string]bool)
+		for i, p := range trimmed {
+			if p == "" {
+				return fmt.Errorf("translator.providers[%d] is empty", i)
+			}
+			if !validProviders[p] {
+				return fmt.Errorf("translator.providers: unknown provider %q", p)
+			}
+			if seen[p] {
+				return fmt.Errorf("translator.providers: duplicate provider %q", p)
+			}
+			seen[p] = true
+		}
+
+		for _, p := range trimmed {
+			switch p {
+			case "gemini":
+				if err := validateGeminiSection(c); err != nil {
+					return err
+				}
+			case "openrouter":
+				if c.OpenRouter.APIKey == "" {
+					return fmt.Errorf("openrouter.api_key is required when openrouter is in translator.providers")
+				}
+				if !c.OpenRouter.AutoSelectModel && c.OpenRouter.Model == "" {
+					return fmt.Errorf("openrouter.model is required when openrouter is in translator.providers (or enable auto_select_model)")
+				}
+				if c.OpenRouter.AutoSelectModel {
+					if err := c.validateOpenRouterAutoSelectModel(); err != nil {
+						return err
+					}
+				}
+			case "local_llm":
+				if c.LocalLLM.BaseURL == "" {
+					return fmt.Errorf("local_llm.base_url is required when local_llm is in translator.providers")
+				}
+			}
+		}
+		return nil
+	}
+
+	switch {
 	case c.Gemini.APIKey == "":
 		return fmt.Errorf("gemini.api_key is required")
 	case c.Gemini.PrimaryModel.Name == "":
@@ -246,26 +352,8 @@ func (c *Config) Validate() error {
 	}
 
 	if c.OpenRouter.AutoSelectModel {
-		if c.OpenRouter.APIKey == "" {
-			return fmt.Errorf("openrouter.api_key is required when auto_select_model is enabled")
-		}
-		if c.OpenRouter.Model == "" {
-			return fmt.Errorf("openrouter.model is required when auto_select_model is enabled (used as fallback)")
-		}
-		if c.OpenRouter.Evaluator.Provider == "" {
-			return fmt.Errorf("openrouter.evaluator.provider is required when auto_select_model is enabled")
-		}
-		if c.OpenRouter.Evaluator.Provider != "gemini" {
-			return fmt.Errorf("only 'gemini' is supported as evaluator.provider")
-		}
-		if c.OpenRouter.Evaluator.GeminiAPIKey == "" && c.Gemini.APIKey == "" {
-			return fmt.Errorf("either openrouter.evaluator.gemini_api_key or gemini.api_key is required when auto_select_model is enabled")
-		}
-		if c.OpenRouter.Evaluator.ScheduleHour < 0 || c.OpenRouter.Evaluator.ScheduleHour > 23 {
-			c.OpenRouter.Evaluator.ScheduleHour = 3
-		}
-		if c.OpenRouter.Evaluator.Model == "" {
-			c.OpenRouter.Evaluator.Model = "gemini-3-flash"
+		if err := c.validateOpenRouterAutoSelectModel(); err != nil {
+			return err
 		}
 	}
 
@@ -372,7 +460,15 @@ func (c *Config) SafeLogValues() map[string]any {
 		"openrouter.evaluator.gemini_api_key":   util.MaskSecret(c.OpenRouter.Evaluator.GeminiAPIKey),
 		"openrouter.evaluator.model":            c.OpenRouter.Evaluator.Model,
 		"openrouter.evaluator.schedule_hour":    c.OpenRouter.Evaluator.ScheduleHour,
+		"translator.providers":                  c.Translator.Providers,
 		"translator.target_lang":                c.Translator.TargetLanguage,
 		"translator.suffix":                     c.Translator.OutputSuffix,
+		"local_llm.base_url":                    c.LocalLLM.BaseURL,
+		"local_llm.api_key":                     util.MaskSecret(c.LocalLLM.APIKey),
+		"local_llm.model":                       c.LocalLLM.Model,
+		"local_llm.endpoint":                    c.LocalLLM.Endpoint,
+		"local_llm.instruction":                 c.LocalLLM.Instruction,
+		"local_llm.rate_limit":                  c.LocalLLM.RateLimit,
+		"local_llm.max_batch_size":              c.LocalLLM.MaxBatchSize,
 	}
 }
