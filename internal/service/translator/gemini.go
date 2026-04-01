@@ -150,9 +150,12 @@ func (t *GeminiTranslator) switchToSecondary() {
 func (t *GeminiTranslator) ResetToPrimary() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	wasExhausted := t.primaryExhausted
 	t.primaryExhausted = false
 	t.activeModel = &t.primaryModel
-	logger.Infof("🔄 Daily reset: switched back to primary model (%s)", t.primaryModel.Name)
+	if wasExhausted {
+		logger.Infof("🔄 Daily reset: switched back to primary model (%s)", t.primaryModel.Name)
+	}
 }
 
 func (t *GeminiTranslator) UpdateFromConfig(cfg *config.Config) {
