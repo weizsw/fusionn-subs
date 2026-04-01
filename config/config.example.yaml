@@ -87,6 +87,7 @@ local_llm:
   instruction: ""                             # Custom translation instruction (optional)
   rate_limit: 10                              # Requests per minute (default: 10)
   max_batch_size: 20                          # Max subtitles per batch (default: 20)
+  timeout: 30m                                # Script timeout (default: 30m, increase for slow models)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TRANSLATOR - Output settings

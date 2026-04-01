@@ -18,7 +18,8 @@ import (
 const (
 	DefaultCallbackTimeout    = 15 * time.Second
 	DefaultCallbackMaxRetries = 3
-	DefaultGeminiTimeout      = 15 * time.Minute
+	DefaultGeminiTimeout      = 30 * time.Minute
+	DefaultLocalLLMTimeout    = 30 * time.Minute
 	DefaultWorkerPollTimeout  = 5 * time.Second
 )
 
@@ -67,13 +68,14 @@ type OpenRouterConfig struct {
 }
 
 type LocalLLMConfig struct {
-	BaseURL      string `mapstructure:"base_url"`
-	APIKey       string `mapstructure:"api_key"`
-	Model        string `mapstructure:"model"`
-	Endpoint     string `mapstructure:"endpoint"`
-	Instruction  string `mapstructure:"instruction"`
-	RateLimit    int    `mapstructure:"rate_limit"`
-	MaxBatchSize int    `mapstructure:"max_batch_size"`
+	BaseURL      string        `mapstructure:"base_url"`
+	APIKey       string        `mapstructure:"api_key"`
+	Model        string        `mapstructure:"model"`
+	Endpoint     string        `mapstructure:"endpoint"`
+	Instruction  string        `mapstructure:"instruction"`
+	RateLimit    int           `mapstructure:"rate_limit"`
+	MaxBatchSize int           `mapstructure:"max_batch_size"`
+	Timeout      time.Duration `mapstructure:"timeout"`
 }
 
 type EvaluatorConfig struct {
@@ -470,5 +472,6 @@ func (c *Config) SafeLogValues() map[string]any {
 		"local_llm.instruction":                 c.LocalLLM.Instruction,
 		"local_llm.rate_limit":                  c.LocalLLM.RateLimit,
 		"local_llm.max_batch_size":              c.LocalLLM.MaxBatchSize,
+		"local_llm.timeout":                     c.LocalLLM.Timeout.String(),
 	}
 }

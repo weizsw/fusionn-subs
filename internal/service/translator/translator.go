@@ -57,7 +57,20 @@ func executeScript(cmd *exec.Cmd, outputPath string) (resultPath, combinedOutput
 	stderrStr := strings.TrimSpace(stderrBuf.String())
 	combined := stdoutStr + "\n" + stderrStr
 
+	if reason, failed := detectScriptFailure(stdoutStr, stderrStr); failed {
+		logger.Errorf("Script failure detected: %s", reason)
+		return "", combined, fmt.Errorf("script reported failure: %s", reason)
+	}
+
 	if err != nil {
+		// Process failed (e.g. killed by timeout), but check if the output file
+		// was already written. llm-subtrans saves the file before exiting, so a
+		// kill during cleanup should not discard a valid result.
+		if _, statErr := os.Stat(outputPath); statErr == nil {
+			logger.Warnf("Script exited with error (%v) but output file exists, treating as success: %s", err, outputPath)
+			return outputPath, combined, nil
+		}
+
 		logger.Errorf("Translation failed: %v", err)
 		if stderrStr != "" {
 			logger.Errorf("Script stderr: %s", stderrStr)
@@ -68,11 +81,6 @@ func executeScript(cmd *exec.Cmd, outputPath string) (resultPath, combinedOutput
 	if _, statErr := os.Stat(outputPath); statErr != nil {
 		logger.Errorf("Output file not found after script completed")
 		return "", combined, fmt.Errorf("output not found: %w", statErr)
-	}
-
-	if reason, failed := detectScriptFailure(stdoutStr, stderrStr); failed {
-		logger.Errorf("Script failure detected: %s", reason)
-		return "", combined, fmt.Errorf("script reported failure: %s", reason)
 	}
 
 	logger.Infof("✅ Translation completed: %s", outputPath)

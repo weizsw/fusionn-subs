@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fusionn-subs/internal/config"
 	"github.com/fusionn-subs/internal/types"
@@ -26,6 +27,7 @@ type LocalLLMTranslator struct {
 	instruction    string
 	rateLimit      int
 	maxBatchSize   int
+	timeout        time.Duration
 	targetLanguage string
 	outputSuffix   string
 }
@@ -51,6 +53,11 @@ func NewLocalLLMTranslator(cfg config.LocalLLMConfig, targetLang, outputSuffix s
 		rateLimit = 10
 	}
 
+	timeout := cfg.Timeout
+	if timeout == 0 {
+		timeout = config.DefaultLocalLLMTimeout
+	}
+
 	return &LocalLLMTranslator{
 		scriptPath:     scriptPath,
 		workDir:        workDir,
@@ -61,6 +68,7 @@ func NewLocalLLMTranslator(cfg config.LocalLLMConfig, targetLang, outputSuffix s
 		instruction:    cfg.Instruction,
 		rateLimit:      rateLimit,
 		maxBatchSize:   cfg.MaxBatchSize,
+		timeout:        timeout,
 		targetLanguage: targetLang,
 		outputSuffix:   outputSuffix,
 	}
@@ -82,10 +90,11 @@ func (t *LocalLLMTranslator) Translate(ctx context.Context, msg types.JobMessage
 	instruction := t.instruction
 	rateLimit := t.rateLimit
 	maxBatchSize := t.maxBatchSize
+	timeout := t.timeout
 	targetLanguage := t.targetLanguage
 	t.mu.RUnlock()
 
-	ctxTimeout, cancel := context.WithTimeout(ctx, config.DefaultGeminiTimeout)
+	ctxTimeout, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	args := []string{
@@ -158,6 +167,10 @@ func (t *LocalLLMTranslator) UpdateFromConfig(cfg *config.Config) {
 	t.instruction = cfg.LocalLLM.Instruction
 	t.rateLimit = cfg.LocalLLM.RateLimit
 	t.maxBatchSize = cfg.LocalLLM.MaxBatchSize
+	t.timeout = cfg.LocalLLM.Timeout
+	if t.timeout == 0 {
+		t.timeout = config.DefaultLocalLLMTimeout
+	}
 
 	logger.Infof("🔄 Local LLM config reloaded: %s (model: %s)", t.baseURL, t.model)
 }
