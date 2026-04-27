@@ -7,11 +7,16 @@ import (
 )
 
 type JobMessage struct {
-	JobID        string `json:"job_id"`
-	VideoPath    string `json:"video_path"`
-	SubtitlePath string `json:"subtitle_path"`
-	MediaTitle   string `json:"media_title"`
-	MediaType    string `json:"media_type"`
+	JobID        string            `json:"job_id"`
+	VideoPath    string            `json:"video_path"`
+	SubtitlePath string            `json:"subtitle_path"`
+	MediaTitle   string            `json:"media_title"`
+	MediaType    string            `json:"media_type"`
+	MediaID      string            `json:"media_id,omitempty"`
+	SourceSystem string            `json:"source_system,omitempty"`
+	ExternalIDs  map[string]string `json:"external_ids,omitempty"`
+	Season       int               `json:"season,omitempty"`
+	Episode      int               `json:"episode,omitempty"`
 }
 
 func (m JobMessage) Validate() error {
