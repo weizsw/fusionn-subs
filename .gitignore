@@ -39,6 +39,7 @@ data/
 dist/
 bin/
 build/
+.worktrees/
 
 # Env files
 *.local
