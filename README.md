@@ -72,6 +72,25 @@ translator:
   max_translation_retries: 3           # Retry attempts for failed translations
 ```
 
+### Automatic Glossary
+
+When `glossary.enabled` is true, fusionn-subs scans each subtitle locally, extracts terminology candidates, asks the configured glossary LLM for Chinese-oriented glossary entries, stores them in SQLite, and injects a compact glossary block into the translation instruction.
+
+Glossary extraction and LLM failures do not block translation; existing glossary entries may still be injected. SQLite open, migration, corruption, or transaction failures are treated as service/job failures because persistence is not trustworthy.
+
+```yaml
+glossary:
+  enabled: false
+  db_path: "/app/data/glossary.db"
+  target_language: "zh-Hans"
+  llm:
+    provider: "openai_compatible"      # or "gemini"
+    base_url: "http://127.0.0.1:8045"
+    endpoint: "/v1/chat/completions"
+    api_key: ""
+    model: "qwen3:8b"
+```
+
 **Popular OpenRouter Models:**
 
 - `openai/gpt-4o-mini` - Fast and affordable
@@ -287,11 +306,19 @@ fusionn-subs expects jobs in this format:
 
 ```json
 {
-  "job_id": "uuid-string",
+  "job_id": "job-123",
   "video_path": "/media/Show/S01E01.mkv",
   "subtitle_path": "/media/Show/S01E01.eng.srt",
-  "media_title": "Show Name S01E01",
-  "media_type": "episode"
+  "media_title": "The Capture",
+  "media_type": "series",
+  "source_system": "sonarr",
+  "media_id": "42",
+  "external_ids": {
+    "tvdb": "355620",
+    "imdb": "tt8201186"
+  },
+  "season": 1,
+  "episode": 1
 }
 ```
 
@@ -301,6 +328,7 @@ fusionn-subs expects jobs in this format:
 - `subtitle_path`: Path to the English subtitle file to translate
 - `media_title`: Human-readable media name (used in translation context)
 - `media_type`: "episode" or "movie"
+- `source_system`, `media_id`, `external_ids`, `season`, `episode`: Optional identity fields from Sonarr/Radarr or another client. They improve per-series/movie glossary reuse and are backward-compatible; legacy jobs without these fields still work.
 
 **Callback payload sent after translation:**
 
