@@ -369,23 +369,84 @@ func (c *Config) validateGlossary() error {
 	if strings.TrimSpace(c.Glossary.DBPath) == "" {
 		return fmt.Errorf("glossary.db_path is required when glossary is enabled")
 	}
-	if c.Glossary.TargetLanguage == "" {
+	if strings.TrimSpace(c.Glossary.TargetLanguage) == "" {
 		return fmt.Errorf("glossary.target_language is required when glossary is enabled")
 	}
-	switch c.Glossary.LLM.Provider {
+	if err := validateGlossaryNumericValues(&c.Glossary); err != nil {
+		return err
+	}
+	provider := strings.TrimSpace(c.Glossary.LLM.Provider)
+	switch provider {
 	case "openai_compatible":
-		if c.Glossary.LLM.BaseURL == "" {
+		if strings.TrimSpace(c.Glossary.LLM.BaseURL) == "" {
 			return fmt.Errorf("glossary.llm.base_url is required for openai_compatible provider")
 		}
 	case "gemini":
-		if c.Glossary.LLM.APIKey == "" && c.Gemini.APIKey == "" {
+		if strings.TrimSpace(c.Glossary.LLM.APIKey) == "" && strings.TrimSpace(c.Gemini.APIKey) == "" {
 			return fmt.Errorf("glossary.llm.api_key or gemini.api_key is required for gemini provider")
 		}
 	default:
 		return fmt.Errorf("unsupported glossary.llm.provider: %q", c.Glossary.LLM.Provider)
 	}
-	if c.Glossary.LLM.Model == "" {
+	if strings.TrimSpace(c.Glossary.LLM.Model) == "" {
 		return fmt.Errorf("glossary.llm.model is required when glossary is enabled")
+	}
+	return nil
+}
+
+func validateGlossaryNumericValues(g *GlossaryConfig) error {
+	if err := validateUnitInterval("glossary.min_confidence", g.MinConfidence); err != nil {
+		return err
+	}
+	if err := validateUnitInterval("glossary.inject_min_confidence", g.InjectMinConfidence); err != nil {
+		return err
+	}
+	if err := validateUnitInterval("glossary.promote_min_confidence", g.PromoteMinConfidence); err != nil {
+		return err
+	}
+	if err := validatePositiveInt("glossary.max_prompt_entries", g.MaxPromptEntries); err != nil {
+		return err
+	}
+	if err := validatePositiveInt("glossary.max_candidates", g.MaxCandidates); err != nil {
+		return err
+	}
+	if err := validatePositiveInt("glossary.max_snippets_per_candidate", g.MaxSnippetsPerCandidate); err != nil {
+		return err
+	}
+	if g.MaxSubtitleBytes <= 0 {
+		return fmt.Errorf("glossary.max_subtitle_bytes must be positive")
+	}
+	if err := validatePositiveInt("glossary.max_cues", g.MaxCues); err != nil {
+		return err
+	}
+	if err := validatePositiveInt("glossary.max_active_variants_per_term", g.MaxActiveVariantsPerTerm); err != nil {
+		return err
+	}
+	if err := validatePositiveInt("glossary.max_observations_per_variant", g.MaxObservationsPerVariant); err != nil {
+		return err
+	}
+	if err := validatePositiveInt("glossary.promote_min_media_count", g.PromoteMinMediaCount); err != nil {
+		return err
+	}
+	if g.LLM.Timeout <= 0 {
+		return fmt.Errorf("glossary.llm.timeout must be positive")
+	}
+	if g.LLM.Temperature < 0 {
+		return fmt.Errorf("glossary.llm.temperature must be non-negative")
+	}
+	return nil
+}
+
+func validateUnitInterval(name string, value float64) error {
+	if value < 0 || value > 1 {
+		return fmt.Errorf("%s must be between 0 and 1", name)
+	}
+	return nil
+}
+
+func validatePositiveInt(name string, value int) error {
+	if value <= 0 {
+		return fmt.Errorf("%s must be positive", name)
 	}
 	return nil
 }
@@ -509,11 +570,23 @@ func logChanges(old, cur any, prefix string) {
 
 		// Compare values
 		if !reflect.DeepEqual(oldField.Interface(), newField.Interface()) {
-			oldStr := formatValue(oldField)
-			newStr := formatValue(newField)
+			oldStr := formatLogChangeValue(fieldName, oldField)
+			newStr := formatLogChangeValue(fieldName, newField)
 			logger.Infof("  📝 %s: %s → %s", fieldName, oldStr, newStr)
 		}
 	}
+}
+
+func formatLogChangeValue(fieldName string, v reflect.Value) string {
+	if isSecretField(fieldName) {
+		return util.MaskSecret(fmt.Sprintf("%v", v.Interface()))
+	}
+	return formatValue(v)
+}
+
+func isSecretField(fieldName string) bool {
+	parts := strings.Split(fieldName, ".")
+	return len(parts) > 0 && parts[len(parts)-1] == "APIKey"
 }
 
 // formatValue formats a reflect.Value for logging, masking sensitive fields.
