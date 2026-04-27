@@ -126,7 +126,7 @@ func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
 		}
 
 		var err error
-		chsPath, err = w.translator.Translate(ctx, msg)
+		chsPath, err = w.translator.Translate(ctx, translator.Request{Job: msg})
 		if err == nil {
 			if attempt > 1 {
 				logger.Infof("✅ Translation succeeded on attempt %d", attempt)

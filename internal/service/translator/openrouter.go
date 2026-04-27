@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/fusionn-subs/internal/config"
-	"github.com/fusionn-subs/internal/types"
 	"github.com/fusionn-subs/pkg/logger"
 )
 
@@ -78,7 +77,8 @@ func (t *OpenRouterTranslator) GetModel() string {
 }
 
 // Translate translates subtitles using OpenRouter
-func (t *OpenRouterTranslator) Translate(ctx context.Context, msg types.JobMessage) (string, error) {
+func (t *OpenRouterTranslator) Translate(ctx context.Context, req Request) (string, error) {
+	msg := req.Job
 	if err := msg.Validate(); err != nil {
 		return "", fmt.Errorf("invalid message: %w", err)
 	}
@@ -106,8 +106,8 @@ func (t *OpenRouterTranslator) Translate(ctx context.Context, msg types.JobMessa
 		args = append(args, "--moviename", mediaTitle)
 	}
 
-	if t.instruction != "" {
-		args = append(args, "--instruction", t.instruction)
+	if instruction := combineInstructions(t.instruction, req.ExtraInstruction); instruction != "" {
+		args = append(args, "--instruction", instruction)
 	}
 
 	if t.rateLimit > 0 {

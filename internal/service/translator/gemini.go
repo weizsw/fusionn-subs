@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/fusionn-subs/internal/config"
-	"github.com/fusionn-subs/internal/types"
 	"github.com/fusionn-subs/pkg/logger"
 )
 
@@ -69,7 +68,8 @@ func NewGeminiTranslator(ctx context.Context, cfg config.GeminiConfig, targetLan
 	return t
 }
 
-func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) (string, error) {
+func (t *GeminiTranslator) Translate(ctx context.Context, req Request) (string, error) {
+	msg := req.Job
 	if err := msg.Validate(); err != nil {
 		return "", fmt.Errorf("invalid message: %w", err)
 	}
@@ -99,8 +99,8 @@ func (t *GeminiTranslator) Translate(ctx context.Context, msg types.JobMessage) 
 		args = append(args, "--moviename", mediaTitle)
 	}
 
-	if t.instruction != "" {
-		args = append(args, "--instruction", t.instruction)
+	if instruction := combineInstructions(t.instruction, req.ExtraInstruction); instruction != "" {
+		args = append(args, "--instruction", instruction)
 	}
 
 	if model.RateLimit > 0 {

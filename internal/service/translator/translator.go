@@ -22,6 +22,20 @@ const (
 	dimEnd   = "\033[0m"
 )
 
+func combineInstructions(base, extra string) string {
+	base = strings.TrimSpace(base)
+	extra = strings.TrimSpace(extra)
+
+	switch {
+	case base == "":
+		return extra
+	case extra == "":
+		return base
+	default:
+		return base + "\n\n" + extra
+	}
+}
+
 // executeScript executes a script command and handles stdout/stderr streaming
 func executeScript(cmd *exec.Cmd, outputPath string) (resultPath, combinedOutput string, err error) {
 	stdoutPipe, err := cmd.StdoutPipe()

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/fusionn-subs/internal/config"
-	"github.com/fusionn-subs/internal/types"
 	"github.com/fusionn-subs/pkg/logger"
 )
 
@@ -75,7 +74,8 @@ func NewLocalLLMTranslator(cfg config.LocalLLMConfig, targetLang, outputSuffix s
 }
 
 // Translate translates subtitles using a local/custom OpenAI-compatible endpoint
-func (t *LocalLLMTranslator) Translate(ctx context.Context, msg types.JobMessage) (string, error) {
+func (t *LocalLLMTranslator) Translate(ctx context.Context, req Request) (string, error) {
+	msg := req.Job
 	if err := msg.Validate(); err != nil {
 		return "", fmt.Errorf("invalid message: %w", err)
 	}
@@ -121,7 +121,7 @@ func (t *LocalLLMTranslator) Translate(ctx context.Context, msg types.JobMessage
 		args = append(args, "--moviename", mediaTitle)
 	}
 
-	if instruction != "" {
+	if instruction := combineInstructions(instruction, req.ExtraInstruction); instruction != "" {
 		args = append(args, "--instruction", instruction)
 	}
 
