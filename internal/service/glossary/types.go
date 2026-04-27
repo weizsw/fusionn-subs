@@ -73,3 +73,10 @@ type Candidate struct {
 	Frequency      int
 	Snippets       []string
 }
+
+type ExtractOptions struct {
+	MaxSubtitleBytes        int64
+	MaxCues                 int
+	MaxCandidates           int
+	MaxSnippetsPerCandidate int
+}
