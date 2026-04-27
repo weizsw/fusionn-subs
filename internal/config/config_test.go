@@ -86,3 +86,35 @@ func TestGlossaryEnabledRequiresSupportedProvider(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestSafeLogValuesIncludesAllGlossaryValues(t *testing.T) {
+	cfg := validConfigForTest()
+	cfg.Glossary.Enabled = true
+	cfg.Glossary.DBPath = "/tmp/glossary.db"
+	cfg.Glossary.LLM.Provider = "openai_compatible"
+	cfg.Glossary.LLM.BaseURL = "http://127.0.0.1:8045"
+	cfg.Glossary.LLM.APIKey = "glossary-key"
+	cfg.Glossary.LLM.Model = "qwen3:8b"
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	values := cfg.SafeLogValues()
+	want := map[string]any{
+		"glossary.max_snippets_per_candidate":   cfg.Glossary.MaxSnippetsPerCandidate,
+		"glossary.max_subtitle_bytes":           cfg.Glossary.MaxSubtitleBytes,
+		"glossary.max_cues":                     cfg.Glossary.MaxCues,
+		"glossary.max_active_variants_per_term": cfg.Glossary.MaxActiveVariantsPerTerm,
+		"glossary.max_observations_per_variant": cfg.Glossary.MaxObservationsPerVariant,
+		"glossary.promote_min_confidence":       cfg.Glossary.PromoteMinConfidence,
+		"glossary.promote_min_media_count":      cfg.Glossary.PromoteMinMediaCount,
+		"glossary.llm.temperature":              cfg.Glossary.LLM.Temperature,
+	}
+
+	for key, wantValue := range want {
+		if got := values[key]; got != wantValue {
+			t.Fatalf("%s = %#v, want %#v", key, got, wantValue)
+		}
+	}
+}
