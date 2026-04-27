@@ -3,6 +3,7 @@ module github.com/fusionn-subs
 go 1.23.0
 
 require (
+	github.com/asticode/go-astisub v0.40.0
 	github.com/go-resty/resty/v2 v2.17.1
 	github.com/redis/go-redis/v9 v9.17.0
 	github.com/spf13/viper v1.19.0
@@ -10,6 +11,8 @@ require (
 )
 
 require (
+	github.com/asticode/go-astikit v0.20.0 // indirect
+	github.com/asticode/go-astits v1.8.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
