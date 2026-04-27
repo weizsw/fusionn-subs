@@ -30,6 +30,7 @@ type Config struct {
 	OpenRouter OpenRouterConfig `mapstructure:"openrouter"`
 	LocalLLM   LocalLLMConfig   `mapstructure:"local_llm"`
 	Translator TranslatorConfig `mapstructure:"translator"`
+	Glossary   GlossaryConfig   `mapstructure:"glossary"`
 }
 
 type RedisConfig struct {
@@ -90,6 +91,34 @@ type TranslatorConfig struct {
 	TargetLanguage        string   `mapstructure:"target_language"`
 	OutputSuffix          string   `mapstructure:"output_suffix"`
 	MaxTranslationRetries int      `mapstructure:"max_translation_retries"`
+}
+
+type GlossaryConfig struct {
+	Enabled                   bool              `mapstructure:"enabled"`
+	DBPath                    string            `mapstructure:"db_path"`
+	TargetLanguage            string            `mapstructure:"target_language"`
+	MinConfidence             float64           `mapstructure:"min_confidence"`
+	InjectMinConfidence       float64           `mapstructure:"inject_min_confidence"`
+	MaxPromptEntries          int               `mapstructure:"max_prompt_entries"`
+	MaxCandidates             int               `mapstructure:"max_candidates"`
+	MaxSnippetsPerCandidate   int               `mapstructure:"max_snippets_per_candidate"`
+	MaxSubtitleBytes          int64             `mapstructure:"max_subtitle_bytes"`
+	MaxCues                   int               `mapstructure:"max_cues"`
+	MaxActiveVariantsPerTerm  int               `mapstructure:"max_active_variants_per_term"`
+	MaxObservationsPerVariant int               `mapstructure:"max_observations_per_variant"`
+	PromoteMinConfidence      float64           `mapstructure:"promote_min_confidence"`
+	PromoteMinMediaCount      int               `mapstructure:"promote_min_media_count"`
+	LLM                       GlossaryLLMConfig `mapstructure:"llm"`
+}
+
+type GlossaryLLMConfig struct {
+	Provider    string        `mapstructure:"provider"`
+	BaseURL     string        `mapstructure:"base_url"`
+	Endpoint    string        `mapstructure:"endpoint"`
+	APIKey      string        `mapstructure:"api_key"`
+	Model       string        `mapstructure:"model"`
+	Timeout     time.Duration `mapstructure:"timeout"`
+	Temperature float64       `mapstructure:"temperature"`
 }
 
 var validProviders = map[string]bool{
@@ -281,6 +310,86 @@ func (c *Config) validateOpenRouterAutoSelectModel() error {
 	return nil
 }
 
+func (c *Config) applyGlossaryDefaults() {
+	g := &c.Glossary
+	if !g.Enabled {
+		return
+	}
+	if g.TargetLanguage == "" {
+		g.TargetLanguage = c.Translator.TargetLanguage
+	}
+	if g.MinConfidence == 0 {
+		g.MinConfidence = 0.75
+	}
+	if g.InjectMinConfidence == 0 {
+		g.InjectMinConfidence = 0.80
+	}
+	if g.MaxPromptEntries == 0 {
+		g.MaxPromptEntries = 30
+	}
+	if g.MaxCandidates == 0 {
+		g.MaxCandidates = 80
+	}
+	if g.MaxSnippetsPerCandidate == 0 {
+		g.MaxSnippetsPerCandidate = 3
+	}
+	if g.MaxSubtitleBytes == 0 {
+		g.MaxSubtitleBytes = 1 << 20
+	}
+	if g.MaxCues == 0 {
+		g.MaxCues = 3000
+	}
+	if g.MaxActiveVariantsPerTerm == 0 {
+		g.MaxActiveVariantsPerTerm = 3
+	}
+	if g.MaxObservationsPerVariant == 0 {
+		g.MaxObservationsPerVariant = 10
+	}
+	if g.PromoteMinConfidence == 0 {
+		g.PromoteMinConfidence = 0.85
+	}
+	if g.PromoteMinMediaCount == 0 {
+		g.PromoteMinMediaCount = 3
+	}
+	if g.LLM.Endpoint == "" {
+		g.LLM.Endpoint = "/v1/chat/completions"
+	}
+	if g.LLM.Timeout == 0 {
+		g.LLM.Timeout = time.Minute
+	}
+	if g.LLM.Temperature == 0 {
+		g.LLM.Temperature = 0.1
+	}
+}
+
+func (c *Config) validateGlossary() error {
+	if !c.Glossary.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(c.Glossary.DBPath) == "" {
+		return fmt.Errorf("glossary.db_path is required when glossary is enabled")
+	}
+	if c.Glossary.TargetLanguage == "" {
+		return fmt.Errorf("glossary.target_language is required when glossary is enabled")
+	}
+	switch c.Glossary.LLM.Provider {
+	case "openai_compatible":
+		if c.Glossary.LLM.BaseURL == "" {
+			return fmt.Errorf("glossary.llm.base_url is required for openai_compatible provider")
+		}
+	case "gemini":
+		if c.Glossary.LLM.APIKey == "" && c.Gemini.APIKey == "" {
+			return fmt.Errorf("glossary.llm.api_key or gemini.api_key is required for gemini provider")
+		}
+	default:
+		return fmt.Errorf("unsupported glossary.llm.provider: %q", c.Glossary.LLM.Provider)
+	}
+	if c.Glossary.LLM.Model == "" {
+		return fmt.Errorf("glossary.llm.model is required when glossary is enabled")
+	}
+	return nil
+}
+
 // Validate checks required config fields.
 func (c *Config) Validate() error {
 	switch {
@@ -291,6 +400,8 @@ func (c *Config) Validate() error {
 	case c.Callback.URL == "":
 		return fmt.Errorf("callback.url is required")
 	}
+
+	c.applyGlossaryDefaults()
 
 	if len(c.Translator.Providers) > 0 {
 		trimmed := make([]string, len(c.Translator.Providers))
@@ -335,7 +446,7 @@ func (c *Config) Validate() error {
 				}
 			}
 		}
-		return nil
+		return c.validateGlossary()
 	}
 
 	switch {
@@ -359,7 +470,7 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	return nil
+	return c.validateGlossary()
 }
 
 // logChanges logs field-level differences between old and new config.
@@ -473,5 +584,18 @@ func (c *Config) SafeLogValues() map[string]any {
 		"local_llm.rate_limit":                  c.LocalLLM.RateLimit,
 		"local_llm.max_batch_size":              c.LocalLLM.MaxBatchSize,
 		"local_llm.timeout":                     c.LocalLLM.Timeout.String(),
+		"glossary.enabled":                      c.Glossary.Enabled,
+		"glossary.db_path":                      c.Glossary.DBPath,
+		"glossary.target_language":              c.Glossary.TargetLanguage,
+		"glossary.min_confidence":               c.Glossary.MinConfidence,
+		"glossary.inject_min_confidence":        c.Glossary.InjectMinConfidence,
+		"glossary.max_prompt_entries":           c.Glossary.MaxPromptEntries,
+		"glossary.max_candidates":               c.Glossary.MaxCandidates,
+		"glossary.llm.provider":                 c.Glossary.LLM.Provider,
+		"glossary.llm.base_url":                 c.Glossary.LLM.BaseURL,
+		"glossary.llm.endpoint":                 c.Glossary.LLM.Endpoint,
+		"glossary.llm.api_key":                  util.MaskSecret(c.Glossary.LLM.APIKey),
+		"glossary.llm.model":                    c.Glossary.LLM.Model,
+		"glossary.llm.timeout":                  c.Glossary.LLM.Timeout.String(),
 	}
 }
