@@ -3,6 +3,7 @@ package glossary
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/fusionn-subs/internal/types"
 	"github.com/fusionn-subs/pkg/logger"
@@ -22,6 +23,7 @@ type ServiceConfig struct {
 	MaxObservationsPerVariant int
 	PromoteMinConfidence      float64
 	PromoteMinMediaCount      int
+	LLMTimeout                time.Duration
 }
 
 type Service struct {
@@ -78,7 +80,14 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (string, er
 		return promptFromEntries(), nil
 	}
 
-	resp, err := s.llm.GenerateGlossary(ctx, GenerateRequest{
+	llmCtx := ctx
+	cancel := func() {}
+	if s.cfg.LLMTimeout > 0 {
+		llmCtx, cancel = context.WithTimeout(ctx, s.cfg.LLMTimeout)
+	}
+	defer cancel()
+
+	resp, err := s.llm.GenerateGlossary(llmCtx, GenerateRequest{
 		Job:             msg,
 		MediaKey:        mediaKey.Value,
 		TargetLanguage:  s.cfg.TargetLanguage,

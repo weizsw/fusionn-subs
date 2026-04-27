@@ -28,18 +28,24 @@ type Config struct {
 	MaxTranslationRetries int
 }
 
+type GlossaryPreparer interface {
+	Prepare(ctx context.Context, msg types.JobMessage) (string, error)
+}
+
 type Worker struct {
 	redis      *redis.Client
 	cfg        Config
 	translator translator.Translator
+	glossary   GlossaryPreparer
 	callback   *callback.Client
 }
 
-func New(redisClient *redis.Client, cfg Config, trans translator.Translator, callbackClient *callback.Client) *Worker {
+func New(redisClient *redis.Client, cfg Config, trans translator.Translator, glossary GlossaryPreparer, callbackClient *callback.Client) *Worker {
 	return &Worker{
 		redis:      redisClient,
 		cfg:        cfg,
 		translator: trans,
+		glossary:   glossary,
 		callback:   callbackClient,
 	}
 }
@@ -111,52 +117,9 @@ func (w *Worker) processNext(ctx context.Context) error {
 }
 
 func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
-	// Translate with retry logic
-	var chsPath string
-	var lastErr error
-
-	maxRetries := w.cfg.MaxTranslationRetries
-	if maxRetries <= 0 {
-		maxRetries = 3 // Default
-	}
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if attempt > 1 {
-			logger.Infof("⏳ Translation retry %d/%d: job_id=%s", attempt-1, maxRetries-1, msg.JobID)
-		}
-
-		var err error
-		chsPath, err = w.translator.Translate(ctx, translator.Request{Job: msg})
-		if err == nil {
-			if attempt > 1 {
-				logger.Infof("✅ Translation succeeded on attempt %d", attempt)
-			}
-			break
-		}
-
-		lastErr = err
-		logger.Warnf("Translation attempt %d failed: %v", attempt, err)
-
-		if errors.Is(err, translator.ErrAllModelsExhausted) {
-			break
-		}
-
-		if attempt < maxRetries && !errors.Is(err, translator.ErrRateLimited) {
-			select {
-			case <-time.After(2 * time.Second):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	}
-
-	if lastErr != nil {
-		if errors.Is(lastErr, translator.ErrAllModelsExhausted) {
-			logger.Errorf("❌ All models exhausted: job_id=%s", msg.JobID)
-			return fmt.Errorf("all models exhausted: %w", lastErr)
-		}
-		logger.Errorf("❌ Translation failed after %d attempts: job_id=%s", maxRetries, msg.JobID)
-		return fmt.Errorf("translation failed after %d attempts: %w", maxRetries, lastErr)
+	chsPath, err := w.translateJob(ctx, msg)
+	if err != nil {
+		return err
 	}
 
 	payload := callback.Payload{
@@ -172,4 +135,61 @@ func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
 
 	logger.Infof("✅ Completed: %s", chsPath)
 	return nil
+}
+
+func (w *Worker) translateJob(ctx context.Context, msg types.JobMessage) (string, error) {
+	extraInstruction := ""
+	if w.glossary != nil {
+		block, err := w.glossary.Prepare(ctx, msg)
+		if err != nil {
+			return "", fmt.Errorf("prepare glossary: %w", err)
+		}
+		extraInstruction = block
+	}
+
+	var lastErr error
+	maxRetries := w.cfg.MaxTranslationRetries
+	if maxRetries <= 0 {
+		maxRetries = 3 // Default
+	}
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if attempt > 1 {
+			logger.Infof("⏳ Translation retry %d/%d: job_id=%s", attempt-1, maxRetries-1, msg.JobID)
+		}
+
+		var err error
+		chsPath, err := w.translator.Translate(ctx, translator.Request{
+			Job:              msg,
+			ExtraInstruction: extraInstruction,
+		})
+		if err == nil {
+			if attempt > 1 {
+				logger.Infof("✅ Translation succeeded on attempt %d", attempt)
+			}
+			return chsPath, nil
+		}
+
+		lastErr = err
+		logger.Warnf("Translation attempt %d failed: %v", attempt, err)
+
+		if errors.Is(err, translator.ErrAllModelsExhausted) {
+			break
+		}
+
+		if attempt < maxRetries && !errors.Is(err, translator.ErrRateLimited) {
+			select {
+			case <-time.After(2 * time.Second):
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+	}
+
+	if errors.Is(lastErr, translator.ErrAllModelsExhausted) {
+		logger.Errorf("❌ All models exhausted: job_id=%s", msg.JobID)
+		return "", fmt.Errorf("all models exhausted: %w", lastErr)
+	}
+	logger.Errorf("❌ Translation failed after %d attempts: job_id=%s", maxRetries, msg.JobID)
+	return "", fmt.Errorf("translation failed after %d attempts: %w", maxRetries, lastErr)
 }
