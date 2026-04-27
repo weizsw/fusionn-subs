@@ -1,6 +1,11 @@
 package glossary
 
-import "time"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+	"time"
+)
 
 type Scope string
 type VariantStatus string
@@ -79,4 +84,9 @@ type ExtractOptions struct {
 	MaxCues                 int
 	MaxCandidates           int
 	MaxSnippetsPerCandidate int
+}
+
+func SubtitlePathHash(path string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(path))))
+	return hex.EncodeToString(sum[:])
 }

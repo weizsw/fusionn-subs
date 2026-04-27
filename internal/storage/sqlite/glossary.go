@@ -2,9 +2,7 @@ package sqlite
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -175,8 +173,85 @@ on conflict(job_id) do update set
 	return nil
 }
 
-func (s *GlossaryStore) PromoteCommonEntries(context.Context, glossary.PromotionOptions) (glossary.PromotionResult, error) {
-	return glossary.PromotionResult{}, nil
+func (s *GlossaryStore) PromoteCommonEntries(ctx context.Context, opts glossary.PromotionOptions) (glossary.PromotionResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return glossary.PromotionResult{}, fmt.Errorf("begin glossary promotion: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `
+select t.normalized_term, min(t.display_term), v.target_text, max(v.definition),
+       v.translation_mode, v.category, avg(v.confidence), sum(v.evidence_count)
+from glossary_terms t
+join glossary_variants v on v.term_id = t.id
+where t.scope = 'media'
+  and v.target_language = ?
+  and v.status = 'active'
+  and v.confidence >= ?
+group by t.normalized_term, v.target_text, v.translation_mode, v.category
+having count(distinct t.media_key) >= ?`, opts.TargetLanguage, opts.MinConfidence, opts.MinDistinctMediaCount)
+	if err != nil {
+		return glossary.PromotionResult{}, fmt.Errorf("select promotion candidates: %w", err)
+	}
+	defer rows.Close()
+
+	result := glossary.PromotionResult{}
+	for rows.Next() {
+		var normalized, display, targetText, definition, mode, category string
+		var confidence float64
+		var evidenceCount int
+		if err := rows.Scan(&normalized, &display, &targetText, &definition, &mode, &category, &confidence, &evidenceCount); err != nil {
+			return result, fmt.Errorf("scan promotion candidate: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+insert or ignore into glossary_terms(scope, media_key, normalized_term, display_term)
+values ('common', null, ?, ?)`, normalized, display); err != nil {
+			return result, fmt.Errorf("insert common term: %w", err)
+		}
+
+		var termID int64
+		if err := tx.QueryRowContext(ctx, `
+select id from glossary_terms where scope = 'common' and normalized_term = ?`, normalized).Scan(&termID); err != nil {
+			return result, fmt.Errorf("load common term id: %w", err)
+		}
+
+		res, err := tx.ExecContext(ctx, `
+insert into glossary_variants(term_id, target_language, target_text, definition, translation_mode, category, status, source, confidence, evidence_count)
+select ?, ?, ?, ?, ?, ?, 'active', 'promoted', ?, ?
+where not exists (
+    select 1 from glossary_variants
+    where term_id = ? and target_language = ? and lower(target_text) = lower(?)
+)`,
+			termID,
+			opts.TargetLanguage,
+			targetText,
+			definition,
+			mode,
+			category,
+			confidence,
+			evidenceCount,
+			termID,
+			opts.TargetLanguage,
+			targetText,
+		)
+		if err != nil {
+			return result, fmt.Errorf("insert common variant: %w", err)
+		}
+		affected, _ := res.RowsAffected()
+		if affected > 0 {
+			result.Promoted++
+		} else {
+			result.Skipped++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return result, fmt.Errorf("iterate promotion candidates: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return result, fmt.Errorf("commit glossary promotion: %w", err)
+	}
+	return result, nil
 }
 
 func upsertTerm(ctx context.Context, tx *sql.Tx, mediaKey string, entry glossary.GeneratedEntry) (int64, error) {
@@ -226,7 +301,7 @@ func insertObservation(ctx context.Context, tx *sql.Tx, variantID int64, req glo
 	if len(entry.Evidence) > 0 {
 		snippet = entry.Evidence[0]
 	}
-	subtitleHash := subtitlePathHash(req.Job.SubtitlePath)
+	subtitleHash := glossary.SubtitlePathHash(req.Job.SubtitlePath)
 	_, err := tx.ExecContext(ctx, `
 insert into glossary_observations(variant_id, job_id, media_key, subtitle_path_hash, season, episode, snippet, confidence)
 values (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -297,11 +372,6 @@ where term_id = ?
 		return 0, fmt.Errorf("read suppressed glossary variants: %w", err)
 	}
 	return int(affected), nil
-}
-
-func subtitlePathHash(path string) string {
-	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(path))))
-	return hex.EncodeToString(sum[:])
 }
 
 func parseSQLiteTime(value string) time.Time {
