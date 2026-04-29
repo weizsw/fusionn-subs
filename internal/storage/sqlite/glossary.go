@@ -82,7 +82,8 @@ func (s *GlossaryStore) UpsertGeneratedEntries(ctx context.Context, req glossary
 
 	var result glossary.UpsertResult
 	for _, entry := range req.Entries {
-		termID, err := upsertTerm(ctx, tx, req.MediaKey, entry)
+		now := localSQLiteTimestamp()
+		termID, err := upsertTerm(ctx, tx, req.MediaKey, entry, now)
 		if err != nil {
 			return result, err
 		}
@@ -110,9 +111,9 @@ update glossary_variants
 set confidence = max(confidence, ?),
     evidence_count = evidence_count + 1,
     definition = case when length(definition) >= length(?) then definition else ? end,
-    updated_at = datetime('now','localtime'),
-    last_seen_at = datetime('now','localtime')
-where id = ?`, entry.Confidence, entry.Definition, entry.Definition, variantID)
+    updated_at = ?,
+    last_seen_at = ?
+where id = ?`, entry.Confidence, entry.Definition, entry.Definition, now, now, variantID)
 			if err != nil {
 				return result, fmt.Errorf("merge glossary variant: %w", err)
 			}
@@ -120,7 +121,7 @@ where id = ?`, entry.Confidence, entry.Definition, entry.Definition, variantID)
 		case errors.Is(err, sql.ErrNoRows):
 			res, err := tx.ExecContext(ctx, `
 insert into glossary_variants(term_id, target_language, target_text, definition, translation_mode, category, status, source, confidence, evidence_count, created_at, updated_at, last_seen_at)
-values (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now','localtime'), datetime('now','localtime'), datetime('now','localtime'))`,
+values (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
 				termID,
 				targetLanguage,
 				entry.TargetText,
@@ -130,6 +131,9 @@ values (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now','localtime'), datetime('now
 				status,
 				glossary.SourceGenerated,
 				entry.Confidence,
+				now,
+				now,
+				now,
 			)
 			if err != nil {
 				return result, fmt.Errorf("insert glossary variant: %w", err)
@@ -142,10 +146,10 @@ values (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now','localtime'), datetime('now
 			return result, fmt.Errorf("find glossary variant: %w", err)
 		}
 
-		if err := insertObservation(ctx, tx, variantID, req, entry); err != nil {
+		if err := insertObservation(ctx, tx, variantID, req, entry, now); err != nil {
 			return result, err
 		}
-		suppressed, err := suppressExcessActiveVariants(ctx, tx, termID, targetLanguage, req.Options.MaxActiveVariantsPerTerm)
+		suppressed, err := suppressExcessActiveVariants(ctx, tx, termID, targetLanguage, req.Options.MaxActiveVariantsPerTerm, now)
 		if err != nil {
 			return result, err
 		}
@@ -159,15 +163,16 @@ values (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now','localtime'), datetime('now
 }
 
 func (s *GlossaryStore) RecordJob(ctx context.Context, job glossary.JobRecord) error {
+	now := localSQLiteTimestamp()
 	_, err := s.db.ExecContext(ctx, `
 insert into glossary_jobs(job_id, media_key, subtitle_path_hash, status, error, created_at, completed_at)
-values (?, ?, ?, ?, ?, datetime('now','localtime'), datetime('now','localtime'))
+values (?, ?, ?, ?, ?, ?, ?)
 on conflict(job_id) do update set
     media_key = excluded.media_key,
     subtitle_path_hash = excluded.subtitle_path_hash,
     status = excluded.status,
     error = excluded.error,
-    completed_at = datetime('now','localtime')`, job.JobID, job.MediaKey, job.SubtitlePathHash, job.Status, job.Error)
+    completed_at = ?`, job.JobID, job.MediaKey, job.SubtitlePathHash, job.Status, job.Error, now, now, now)
 	if err != nil {
 		return fmt.Errorf("record glossary job: %w", err)
 	}
@@ -199,6 +204,7 @@ having count(distinct t.media_key) >= ?`, opts.TargetLanguage, opts.MinConfidenc
 
 	result := glossary.PromotionResult{}
 	for rows.Next() {
+		now := localSQLiteTimestamp()
 		var normalized, display, targetText, definition, mode, category string
 		var confidence float64
 		var evidenceCount int
@@ -207,7 +213,7 @@ having count(distinct t.media_key) >= ?`, opts.TargetLanguage, opts.MinConfidenc
 		}
 		if _, err := tx.ExecContext(ctx, `
 insert or ignore into glossary_terms(scope, media_key, normalized_term, display_term, created_at, updated_at, last_seen_at)
-values ('common', null, ?, ?, datetime('now','localtime'), datetime('now','localtime'), datetime('now','localtime'))`, normalized, display); err != nil {
+values ('common', null, ?, ?, ?, ?, ?)`, normalized, display, now, now, now); err != nil {
 			return result, fmt.Errorf("insert common term: %w", err)
 		}
 
@@ -219,7 +225,7 @@ select id from glossary_terms where scope = 'common' and normalized_term = ?`, n
 
 		res, err := tx.ExecContext(ctx, `
 insert into glossary_variants(term_id, target_language, target_text, definition, translation_mode, category, status, source, confidence, evidence_count, created_at, updated_at, last_seen_at)
-select ?, ?, ?, ?, ?, ?, 'active', 'promoted', ?, ?, datetime('now','localtime'), datetime('now','localtime'), datetime('now','localtime')
+select ?, ?, ?, ?, ?, ?, 'active', 'promoted', ?, ?, ?, ?, ?
 where not exists (
     select 1 from glossary_variants
     where term_id = ? and target_language = ? and lower(target_text) = lower(?)
@@ -232,6 +238,9 @@ where not exists (
 			category,
 			confidence,
 			evidenceCount,
+			now,
+			now,
+			now,
 			termID,
 			opts.TargetLanguage,
 			targetText,
@@ -255,7 +264,7 @@ where not exists (
 	return result, nil
 }
 
-func upsertTerm(ctx context.Context, tx *sql.Tx, mediaKey string, entry glossary.GeneratedEntry) (int64, error) {
+func upsertTerm(ctx context.Context, tx *sql.Tx, mediaKey string, entry glossary.GeneratedEntry, now string) (int64, error) {
 	normalized := strings.ToLower(strings.TrimSpace(entry.NormalizedTerm))
 	if normalized == "" {
 		return 0, fmt.Errorf("glossary term normalized_term is required")
@@ -274,8 +283,8 @@ limit 1`, glossary.ScopeMedia, mediaKey, normalized).Scan(&id)
 	case err == nil:
 		_, err = tx.ExecContext(ctx, `
 update glossary_terms
-set display_term = ?, updated_at = datetime('now','localtime'), last_seen_at = datetime('now','localtime')
-where id = ?`, display, id)
+set display_term = ?, updated_at = ?, last_seen_at = ?
+where id = ?`, display, now, now, id)
 		if err != nil {
 			return 0, fmt.Errorf("update glossary term: %w", err)
 		}
@@ -283,7 +292,7 @@ where id = ?`, display, id)
 	case errors.Is(err, sql.ErrNoRows):
 		res, err := tx.ExecContext(ctx, `
 insert into glossary_terms(scope, media_key, normalized_term, display_term, created_at, updated_at, last_seen_at)
-values (?, ?, ?, ?, datetime('now','localtime'), datetime('now','localtime'), datetime('now','localtime'))`, glossary.ScopeMedia, mediaKey, normalized, display)
+values (?, ?, ?, ?, ?, ?, ?)`, glossary.ScopeMedia, mediaKey, normalized, display, now, now, now)
 		if err != nil {
 			return 0, fmt.Errorf("insert glossary term: %w", err)
 		}
@@ -297,7 +306,7 @@ values (?, ?, ?, ?, datetime('now','localtime'), datetime('now','localtime'), da
 	}
 }
 
-func insertObservation(ctx context.Context, tx *sql.Tx, variantID int64, req glossary.UpsertRequest, entry glossary.GeneratedEntry) error {
+func insertObservation(ctx context.Context, tx *sql.Tx, variantID int64, req glossary.UpsertRequest, entry glossary.GeneratedEntry, now string) error {
 	snippet := ""
 	if len(entry.Evidence) > 0 {
 		snippet = entry.Evidence[0]
@@ -305,7 +314,7 @@ func insertObservation(ctx context.Context, tx *sql.Tx, variantID int64, req glo
 	subtitleHash := glossary.SubtitlePathHash(req.Job.SubtitlePath)
 	_, err := tx.ExecContext(ctx, `
 insert into glossary_observations(variant_id, job_id, media_key, subtitle_path_hash, season, episode, snippet, confidence, created_at)
-values (?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))`,
+values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		variantID,
 		req.Job.JobID,
 		req.MediaKey,
@@ -314,6 +323,7 @@ values (?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))`,
 		req.Job.Episode,
 		snippet,
 		entry.Confidence,
+		now,
 	)
 	if err != nil {
 		return fmt.Errorf("insert glossary observation: %w", err)
@@ -337,13 +347,13 @@ where variant_id = ?
 	return nil
 }
 
-func suppressExcessActiveVariants(ctx context.Context, tx *sql.Tx, termID int64, targetLanguage string, maxActive int) (int, error) {
+func suppressExcessActiveVariants(ctx context.Context, tx *sql.Tx, termID int64, targetLanguage string, maxActive int, now string) (int, error) {
 	if maxActive <= 0 {
 		return 0, nil
 	}
 	res, err := tx.ExecContext(ctx, `
 update glossary_variants
-set status = ?, updated_at = datetime('now','localtime')
+set status = ?, updated_at = ?
 where term_id = ?
   and target_language = ?
   and status = ?
@@ -355,8 +365,9 @@ where term_id = ?
       and status = ?
     order by confidence desc, evidence_count desc, last_seen_at desc, id desc
     limit ?
-  )`,
+	)`,
 		glossary.StatusSuppressed,
+		now,
 		termID,
 		targetLanguage,
 		glossary.StatusActive,
@@ -375,14 +386,21 @@ where term_id = ?
 	return int(affected), nil
 }
 
+func localSQLiteTimestamp() string {
+	return time.Now().Format("2006-01-02 15:04:05")
+}
+
 func parseSQLiteTime(value string) time.Time {
-	for _, layout := range []string{
-		time.RFC3339Nano,
-		"2006-01-02 15:04:05.999999999-07:00",
-		"2006-01-02 15:04:05.999999999",
-		"2006-01-02 15:04:05",
+	for _, layout := range []struct {
+		value    string
+		location *time.Location
+	}{
+		{time.RFC3339Nano, time.UTC},
+		{"2006-01-02 15:04:05.999999999-07:00", time.UTC},
+		{"2006-01-02 15:04:05.999999999", time.Local},
+		{"2006-01-02 15:04:05", time.Local},
 	} {
-		if parsed, err := time.Parse(layout, value); err == nil {
+		if parsed, err := time.ParseInLocation(layout.value, value, layout.location); err == nil {
 			return parsed
 		}
 	}
