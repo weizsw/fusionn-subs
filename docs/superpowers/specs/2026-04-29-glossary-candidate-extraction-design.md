@@ -12,6 +12,10 @@ The current extractor is too conservative for real subtitle terminology. It catc
 
 The opposite problem is also real. Multi-word proper nouns such as `New York` and `Madison Avenue` are easy to extract, but they are not always valuable glossary entries. `New York` has a standard translation that most translation models handle consistently. `Madison Avenue` may refer to a street, an advertising industry metonym, or a media-specific concept. Forcing one translation through `--terminology` can make those cases worse.
 
+The current phrase regex can also create malformed candidates by joining a sentence-start ordinary word with a proper noun. For example, `Have Carbone cater.` can become `Have Carbone`. That candidate is wrong. The useful candidate is `Carbone`, if anything, because it is a restaurant or brand-like proper noun in context.
+
+Subtitle syntax adds another source of noise. ASS/SSA subtitles can contain bilingual lines, line breaks, speaker labels, style overrides, and caption text such as `(laughs)` or `[door opens]`. The extractor should use parsed subtitle lines as text boundaries and avoid producing glossary candidates from formatting, generic speaker labels, or caption-only descriptions.
+
 ## Assumptions
 
 - Candidate extraction should favor moderate recall, because the glossary LLM can reject semantic noise.
@@ -45,7 +49,16 @@ Use a three-gate strategy.
 
 ### Gate 1: Candidate Extraction
 
-Candidate extraction remains recall-oriented but bounded. It will support three additional term shapes:
+Candidate extraction remains recall-oriented but bounded. It will scan parsed subtitle lines rather than `item.String()` for the whole cue, so candidates do not cross ASS/SSA `\N` line boundaries or astisub's `" - "` joiner.
+
+Before matching candidate shapes, each line should be normalized for extraction:
+
+- Use the text produced by `go-astisub` line items so ASS/SSA style effects such as `{\rDefault_1}` are not treated as candidate text.
+- Keep bilingual cues safe by ignoring CJK and other non-Latin-script spans for candidate matching while preserving the original line as evidence snippet context.
+- Strip common speaker prefixes such as `MAN:`, `WOMAN:`, `ANNOUNCER:`, `TV:`, `RADIO:`, `BOTH:`, and `ALL:` before candidate matching.
+- Do not extract candidates from caption-only lines wrapped in parentheses or square brackets when they look like sound/action descriptions, such as `(laughs)` or `[Door Opens]`.
+
+Candidate extraction will support these term shapes:
 
 1. Repeated single-word proper nouns.
    - Match single Title Case words when they appear more than once in the subtitle.
@@ -59,17 +72,41 @@ Candidate extraction remains recall-oriented but bounded. It will support three 
 
 3. Internal punctuation and digit terms.
    - Allow useful internal apostrophes, hyphens, and digits.
-   - Examples: `Spider-Man`, `O'Neill`, `G-Force`, `MI6`, `iPhone`.
+   - Examples: `Spider-Man`, `O'Neill`, `G-Force`, `MI6`, `iPhone`, `Studio 54`, `Area 51`.
+
+4. Dotted, ampersand, and slash acronyms.
+   - Allow compact organization or unit terms such as `U.N.`, `S.H.I.E.L.D.`, `AT&T`, `R&D`, and `S.W.A.T.`.
+   - Filter common discourse acronyms such as `OK` unless snippets show a special media-specific meaning.
+
+5. Proper phrases with internal connectors.
+   - Allow lowercase connectors inside a proper phrase when both sides are anchored by proper tokens.
+   - Examples: `Bank of America`, `Lord of the Rings`, `University of Oxford`, `House of Commons`.
+   - Do not allow connectors at the beginning or end of a candidate.
+
+6. Titles, ranks, and acronym-plus-name phrases.
+   - Allow terms such as `Dr. House`, `Mr. Robot`, `St. Mary's`, `DCI Carey`, and `Agent Carter`.
+   - Keep these bounded to short phrases so ordinary dialogue does not become glossary material.
+
+7. Unicode Latin names and brands.
+   - Allow Latin-script names with accents or curly apostrophes, such as `Hermès`, `Pokémon`, `Beyoncé`, and `D'Angelo`.
+   - Lowercase-only brands such as `adidas` are out of scope for deterministic extraction without a brand dictionary.
 
 The extractor will first count all candidate-shaped occurrences. It will then apply single-token inclusion rules after aggregate frequency is known. Before returning candidates, it will apply a small stoplist for common subtitle discourse words, especially noisy single-word Title Case matches. Examples include `I`, `You`, `The`, `Okay`, `Yeah`, `Well`, `Look`, and `Thanks`.
 
+Multi-word phrase extraction must not join ordinary sentence-start words with a following proper noun. If the first word of a two-word candidate is a phrase-leading verb or discourse word such as `Have`, `How`, `What`, `Let`, `Tell`, `Ask`, `Call`, `Meet`, `Look`, or `Well`, drop the phrase. A trailing proper noun inside that rejected phrase may still be considered as a single-token candidate when it is not the sentence-start token. This turns `Have Carbone` into `Carbone` rather than keeping the malformed phrase.
+
+Do not treat `The` as a universal phrase-leading stop word. Phrases such as `The Hague`, `The Citadel`, `The Company`, and `The Matrix` may be meaningful; the LLM selection gate should decide whether they are worth storing.
+
+Possessive variants should normalize to the base term for matching where practical. For example, `Carbone's` and `Carbone` should share the normalized term `carbone`, and `O'Neill's` should share `o'neill`. The display/source term used for glossary entries should prefer the non-possessive base form.
+
 Candidate sorting should favor higher-risk terms before applying `max_candidates`:
 
-1. acronyms and acronym-digit terms such as `SO15`, `MI6`;
-2. brand/product-like terms such as `Louboutins`, `iPhone`;
-3. punctuation or digit terms such as `Spider-Man`, `G-Force`;
-4. repeated single proper nouns;
-5. multi-word Title Case phrases.
+1. acronyms and acronym-digit terms such as `SO15`, `MI6`, `S.H.I.E.L.D.`;
+2. brand/product-like terms such as `Louboutins`, `iPhone`, `AT&T`;
+3. punctuation, connector, or digit terms such as `Spider-Man`, `G-Force`, `Bank of America`, `Studio 54`;
+4. titles, ranks, and acronym-plus-name terms such as `Dr. House`, `DCI Carey`;
+5. repeated or non-sentence-initial single proper nouns;
+6. ordinary multi-word Title Case phrases.
 
 Frequency remains the tie-breaker inside each priority group.
 
@@ -87,7 +124,10 @@ The prompt must also instruct the model to skip candidates that do not need fixe
 
 - common real-world places with standard translations, such as `New York`, unless snippets show special media-specific meaning;
 - ordinary street names or addresses, such as `Madison Avenue`, unless used as a recurring concept or organization;
+- malformed phrases that include ordinary leading verbs or discourse words, such as `Have Carbone`; return the meaningful proper noun instead, such as `Carbone`, only if it needs consistency guidance;
 - common English words only capitalized because they start a sentence;
+- generic speaker labels and caption descriptions, such as `MAN`, `WOMAN`, `Door Opens`, and `Phone Ringing`;
+- common abbreviations with stable obvious translations, such as `OK` or `TV`, unless they are media-specific;
 - phrases whose target translation should vary by sentence.
 
 Add explicit categories for brand/product terms:
@@ -130,7 +170,15 @@ Add or update tests for:
 - `Louboutins` is extracted as a likely brand term.
 - Repeated single Title Case terms are extracted.
 - Common sentence-start noise is filtered.
+- `Have Carbone` is not extracted as a phrase, while `Carbone` can be extracted as the meaningful candidate.
+- ASS/SSA bilingual lines and style overrides do not create candidates from style names or Chinese text.
+- Common speaker labels and caption-only descriptions are filtered.
 - Hyphenated, apostrophe, and digit-containing terms are extracted.
+- Dotted, ampersand, and slash acronyms are extracted.
+- Proper phrases with internal connectors are extracted.
+- Titles, ranks, and acronym-plus-name phrases are extracted.
+- Possessive variants normalize to the same base term.
+- Unicode Latin names and brands are extracted.
 - Higher-risk candidates sort before ordinary multi-word place phrases when `max_candidates` is constrained.
 - The LLM prompt tells the model to skip common real-world places such as `New York` unless they have special media-specific meaning.
 - The LLM prompt includes `brand` and `product` categories.
