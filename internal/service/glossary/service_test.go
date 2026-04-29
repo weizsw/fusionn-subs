@@ -1,14 +1,20 @@
 package glossary
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/fusionn-subs/internal/types"
+	"github.com/fusionn-subs/pkg/logger"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 type fakeStore struct {
@@ -86,5 +92,71 @@ SO15 asked DCI Carey.
 	}
 	if !reflect.DeepEqual(payload, want) {
 		t.Fatalf("payload = %#v, want %#v", payload, want)
+	}
+}
+
+func TestServiceLogsGlossaryLLMCallContext(t *testing.T) {
+	subtitlePath := filepath.Join(t.TempDir(), "episode.srt")
+	if err := os.WriteFile(subtitlePath, []byte(`1
+00:00:01,000 --> 00:00:03,000
+SO15 asked DCI Carey.
+`), 0o600); err != nil {
+		t.Fatalf("write subtitle: %v", err)
+	}
+
+	var buf bytes.Buffer
+	encoderConfig := zapcore.EncoderConfig{MessageKey: "msg"}
+	core := zapcore.NewCore(
+		zapcore.NewConsoleEncoder(encoderConfig),
+		zapcore.AddSync(&buf),
+		zapcore.InfoLevel,
+	)
+	previous := logger.Log
+	logger.Log = zap.New(core).Sugar()
+	t.Cleanup(func() {
+		logger.Log = previous
+	})
+
+	svc := NewService(ServiceConfig{
+		Enabled:                 true,
+		TargetLanguage:          "zh-Hans",
+		MaxPromptEntries:        10,
+		MaxCandidates:           10,
+		MaxSnippetsPerCandidate: 1,
+		MaxSubtitleBytes:        1 << 20,
+		MaxCues:                 100,
+	}, fakeStore{}, fakeLLM{resp: GenerateResponse{Entries: []GeneratedEntry{{
+		SourceTerm:     "SO15",
+		NormalizedTerm: "so15",
+		TargetLanguage: "zh-Hans",
+		TargetText:     "SO15",
+		Confidence:     0.92,
+	}}}})
+
+	_, err := svc.Prepare(context.Background(), types.JobMessage{
+		JobID:        "job-logs",
+		MediaTitle:   "The Capture",
+		MediaType:    "series",
+		SubtitlePath: subtitlePath,
+	})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+
+	output := buf.String()
+	for _, want := range []string{
+		"Glossary LLM generation started:",
+		"job_id=job-logs",
+		"media_key=title:series:the-capture",
+		"target_language=zh-Hans",
+		"candidates=",
+		"existing_entries=0",
+		"Glossary LLM generation completed:",
+		"entries=1",
+		"duration=",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("log output missing %q:\n%s", want, output)
+		}
 	}
 }
