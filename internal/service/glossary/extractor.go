@@ -137,11 +137,11 @@ func ExtractCandidates(path string, opts ExtractOptions) ([]Candidate, error) {
 	sort.Slice(out, func(i, j int) bool {
 		left := states[out[i].NormalizedTerm]
 		right := states[out[j].NormalizedTerm]
-		if out[i].Frequency != out[j].Frequency {
-			return out[i].Frequency > out[j].Frequency
-		}
 		if left.priority != right.priority {
 			return left.priority < right.priority
+		}
+		if out[i].Frequency != out[j].Frequency {
+			return out[i].Frequency > out[j].Frequency
 		}
 		if left.firstSeen != right.firstSeen {
 			return left.firstSeen < right.firstSeen

@@ -231,6 +231,14 @@ func TestExtractCandidatesPrioritizesHighRiskTermsBeforeCommonPhrases(t *testing
 	found := extractCandidateMap(t, "episode.srt", `1
 00:00:01,000 --> 00:00:03,000
 New York and Madison Avenue saw SO15, Louboutins, and Spider-Man.
+
+2
+00:00:04,000 --> 00:00:06,000
+New York stayed on the list.
+
+3
+00:00:07,000 --> 00:00:09,000
+New York came up again.
 `, ExtractOptions{MaxCandidates: 3})
 
 	for _, term := range []string{"so15", "louboutins", "spider-man"} {
