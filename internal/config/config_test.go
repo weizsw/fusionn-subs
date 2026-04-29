@@ -361,6 +361,21 @@ func TestGlossaryRejectsInvalidNumericValues(t *testing.T) {
 	}
 }
 
+func TestGlossaryRejectsInvalidReasoningEffort(t *testing.T) {
+	cfg := validConfigForTest()
+	cfg.Glossary.Enabled = true
+	cfg.Glossary.DBPath = "/tmp/glossary.db"
+	cfg.Glossary.LLM.Provider = "openai_compatible"
+	cfg.Glossary.LLM.BaseURL = "http://127.0.0.1:8045"
+	cfg.Glossary.LLM.Model = "qwen3:8b"
+	cfg.Glossary.LLM.ReasoningEffort = "maximum"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "glossary.llm.reasoning_effort must be one of") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestSafeLogValuesIncludesAllGlossaryValues(t *testing.T) {
 	cfg := validConfigForTest()
 	cfg.Glossary.Enabled = true
@@ -369,6 +384,7 @@ func TestSafeLogValuesIncludesAllGlossaryValues(t *testing.T) {
 	cfg.Glossary.LLM.BaseURL = "http://127.0.0.1:8045"
 	cfg.Glossary.LLM.APIKey = "glossary-key"
 	cfg.Glossary.LLM.Model = "qwen3:8b"
+	cfg.Glossary.LLM.ReasoningEffort = "low"
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("validate: %v", err)
@@ -395,6 +411,7 @@ func TestSafeLogValuesIncludesAllGlossaryValues(t *testing.T) {
 		"glossary.llm.endpoint":                 cfg.Glossary.LLM.Endpoint,
 		"glossary.llm.api_key":                  util.MaskSecret(cfg.Glossary.LLM.APIKey),
 		"glossary.llm.model":                    cfg.Glossary.LLM.Model,
+		"glossary.llm.reasoning_effort":         cfg.Glossary.LLM.ReasoningEffort,
 		"glossary.llm.timeout":                  cfg.Glossary.LLM.Timeout.String(),
 		"glossary.llm.temperature":              cfg.Glossary.LLM.Temperature,
 	}

@@ -197,11 +197,12 @@ func newGlossaryLLM(ctx context.Context, cfg *config.Config) (glossary.LLMClient
 	switch cfg.Glossary.LLM.Provider {
 	case config.ProviderOpenAICompatible:
 		return glossary.NewOpenAICompatibleClient(glossary.OpenAICompatibleConfig{
-			BaseURL:     cfg.Glossary.LLM.BaseURL,
-			Endpoint:    cfg.Glossary.LLM.Endpoint,
-			APIKey:      cfg.Glossary.LLM.APIKey,
-			Model:       cfg.Glossary.LLM.Model,
-			Temperature: cfg.Glossary.LLM.Temperature,
+			BaseURL:         cfg.Glossary.LLM.BaseURL,
+			Endpoint:        cfg.Glossary.LLM.Endpoint,
+			APIKey:          cfg.Glossary.LLM.APIKey,
+			Model:           cfg.Glossary.LLM.Model,
+			ReasoningEffort: cfg.Glossary.LLM.ReasoningEffort,
+			Temperature:     cfg.Glossary.LLM.Temperature,
 		}), nil
 	case config.ProviderGemini:
 		apiKey := cfg.Glossary.LLM.APIKey

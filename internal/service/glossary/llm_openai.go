@@ -8,6 +8,7 @@ import (
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 const (
@@ -36,11 +37,12 @@ Rules:
 )
 
 type OpenAICompatibleConfig struct {
-	BaseURL     string
-	Endpoint    string
-	APIKey      string
-	Model       string
-	Temperature float64
+	BaseURL         string
+	Endpoint        string
+	APIKey          string
+	Model           string
+	ReasoningEffort string
+	Temperature     float64
 }
 
 type OpenAICompatibleClient struct {
@@ -67,8 +69,9 @@ func (c *OpenAICompatibleClient) GenerateGlossary(ctx context.Context, req Gener
 		return GenerateResponse{}, err
 	}
 	resp, err := c.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model:       c.cfg.Model,
-		Temperature: openai.Float(c.cfg.Temperature),
+		Model:           c.cfg.Model,
+		ReasoningEffort: shared.ReasoningEffort(c.cfg.ReasoningEffort),
+		Temperature:     openai.Float(c.cfg.Temperature),
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.DeveloperMessage(glossarySystemPrompt),
 			openai.UserMessage(userPrompt),

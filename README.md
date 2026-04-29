@@ -109,6 +109,7 @@ glossary:
     endpoint: "/v1/chat/completions"
     api_key: ""
     model: "qwen3:8b"
+    reasoning_effort: ""               # Optional: none, minimal, low, medium, high, or xhigh
 ```
 
 **Popular OpenRouter Models:**

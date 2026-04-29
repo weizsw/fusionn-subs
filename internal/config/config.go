@@ -133,13 +133,14 @@ type GlossaryConfig struct {
 }
 
 type GlossaryLLMConfig struct {
-	Provider    string        `mapstructure:"provider"`
-	BaseURL     string        `mapstructure:"base_url"`
-	Endpoint    string        `mapstructure:"endpoint"`
-	APIKey      string        `mapstructure:"api_key"`
-	Model       string        `mapstructure:"model"`
-	Timeout     time.Duration `mapstructure:"timeout"`
-	Temperature float64       `mapstructure:"temperature"`
+	Provider        string        `mapstructure:"provider"`
+	BaseURL         string        `mapstructure:"base_url"`
+	Endpoint        string        `mapstructure:"endpoint"`
+	APIKey          string        `mapstructure:"api_key"`
+	Model           string        `mapstructure:"model"`
+	ReasoningEffort string        `mapstructure:"reasoning_effort"`
+	Timeout         time.Duration `mapstructure:"timeout"`
+	Temperature     float64       `mapstructure:"temperature"`
 }
 
 var validProviders = map[string]bool{
@@ -416,6 +417,10 @@ func (c *Config) validateGlossary() error {
 	if err := validateGlossaryNumericValues(&c.Glossary); err != nil {
 		return err
 	}
+	c.Glossary.LLM.ReasoningEffort = strings.TrimSpace(c.Glossary.LLM.ReasoningEffort)
+	if err := validateGlossaryReasoningEffort(c.Glossary.LLM.ReasoningEffort); err != nil {
+		return err
+	}
 	provider := strings.TrimSpace(c.Glossary.LLM.Provider)
 	switch provider {
 	case ProviderOpenAICompatible:
@@ -476,6 +481,15 @@ func validateGlossaryNumericValues(g *GlossaryConfig) error {
 		return fmt.Errorf("glossary.llm.temperature must be non-negative")
 	}
 	return nil
+}
+
+func validateGlossaryReasoningEffort(value string) error {
+	switch value {
+	case "", "none", "minimal", "low", "medium", "high", "xhigh":
+		return nil
+	default:
+		return fmt.Errorf("glossary.llm.reasoning_effort must be one of none, minimal, low, medium, high, xhigh")
+	}
 }
 
 func validateUnitInterval(name string, value float64) error {
@@ -730,6 +744,7 @@ func (c *Config) SafeLogValues() map[string]any {
 		"glossary.llm.endpoint":                 c.Glossary.LLM.Endpoint,
 		"glossary.llm.api_key":                  util.MaskSecret(c.Glossary.LLM.APIKey),
 		"glossary.llm.model":                    c.Glossary.LLM.Model,
+		"glossary.llm.reasoning_effort":         c.Glossary.LLM.ReasoningEffort,
 		"glossary.llm.timeout":                  c.Glossary.LLM.Timeout.String(),
 		"glossary.llm.temperature":              c.Glossary.LLM.Temperature,
 	}
