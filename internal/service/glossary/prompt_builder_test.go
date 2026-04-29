@@ -80,3 +80,44 @@ func TestBuildTerminologyFallsBackToNormalizedTerm(t *testing.T) {
 		t.Fatalf("terminology = %#v, want %#v", got, want)
 	}
 }
+
+func TestBuildTerminologySkipsGeneratedContextualEntries(t *testing.T) {
+	got := BuildTerminology([]PromptEntry{
+		{
+			Scope:           ScopeMedia,
+			MediaKey:        "m",
+			NormalizedTerm:  "madison avenue",
+			DisplayTerm:     "Madison Avenue",
+			TargetText:      "麦迪逊大道",
+			TranslationMode: TranslationModeContextual,
+			Confidence:      0.95,
+			Status:          StatusActive,
+			Source:          SourceGenerated,
+		},
+	}, PromptOptions{MediaKey: "m", InjectMinConfidence: 0.80, MaxPromptEntries: 10})
+
+	if !reflect.DeepEqual(got, []Terminology(nil)) {
+		t.Fatalf("terminology = %#v, want nil", got)
+	}
+}
+
+func TestBuildTerminologyAllowsCuratedContextualEntries(t *testing.T) {
+	got := BuildTerminology([]PromptEntry{
+		{
+			Scope:           ScopeMedia,
+			MediaKey:        "m",
+			NormalizedTerm:  "madison avenue",
+			DisplayTerm:     "Madison Avenue",
+			TargetText:      "麦迪逊大道",
+			TranslationMode: TranslationModeContextual,
+			Confidence:      0.60,
+			Status:          StatusActive,
+			Source:          SourceCurated,
+		},
+	}, PromptOptions{MediaKey: "m", InjectMinConfidence: 0.80, MaxPromptEntries: 10})
+	want := []Terminology{{Source: "Madison Avenue", Target: "麦迪逊大道"}}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("terminology = %#v, want %#v", got, want)
+	}
+}
