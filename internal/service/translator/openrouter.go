@@ -111,7 +111,7 @@ func (t *OpenRouterTranslator) Translate(ctx context.Context, req Request) (stri
 	return resultPath, err
 }
 
-func (t *OpenRouterTranslator) buildArgs(req Request, outputPath string, currentModel string) []string {
+func (t *OpenRouterTranslator) buildArgs(req Request, outputPath, currentModel string) []string {
 	msg := req.Job
 	args := []string{
 		msg.SubtitlePath,
