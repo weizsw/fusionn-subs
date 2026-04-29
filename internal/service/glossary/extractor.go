@@ -34,10 +34,9 @@ var (
 		{regexp.MustCompile(`\b[A-Z][\p{Ll}\p{M}]+(?:\s+(?:[A-Z][\p{Ll}\p{M}]+|\d+)){1,3}\b`), candidatePriorityPhrase},
 		{regexp.MustCompile(`\b(?:[a-z]+[A-Z][A-Za-z]*|[A-Z][\p{Ll}\p{M}]+)(?:['’]s)?\b`), candidatePrioritySingleProper},
 	}
-	speakerPrefixPattern = regexp.MustCompile(`(?i)^\s*(?:MAN|WOMAN|ANNOUNCER|TV|RADIO|BOTH|ALL):\s*`)
-	spacePattern         = regexp.MustCompile(`\s+`)
-	possessivePattern    = regexp.MustCompile(`(?i)(?:'s|’s)\b`)
-	camelCasePattern     = regexp.MustCompile(`[a-z][A-Z]`)
+	spacePattern      = regexp.MustCompile(`\s+`)
+	possessivePattern = regexp.MustCompile(`(?i)(?:'s|’s)\b`)
+	camelCasePattern  = regexp.MustCompile(`[a-z][A-Z]`)
 )
 
 type candidatePatternSpec struct {
@@ -156,10 +155,13 @@ func ExtractCandidates(path string, opts ExtractOptions) ([]Candidate, error) {
 
 func prepareCandidateLine(line string) string {
 	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+	line = stripSpeakerPrefix(line)
 	if line == "" || isCaptionOnlyLine(line) {
 		return ""
 	}
-	line = speakerPrefixPattern.ReplaceAllString(line, "")
 
 	var b strings.Builder
 	for _, r := range line {
@@ -173,6 +175,49 @@ func prepareCandidateLine(line string) string {
 		}
 	}
 	return strings.TrimSpace(spacePattern.ReplaceAllString(b.String(), " "))
+}
+
+func stripSpeakerPrefix(line string) string {
+	colon := strings.IndexRune(line, ':')
+	if colon < 0 || colon > 30 {
+		return line
+	}
+	label := strings.TrimSpace(line[:colon])
+	if !isSpeakerLabel(label) {
+		return line
+	}
+	return strings.TrimSpace(line[colon+1:])
+}
+
+func isSpeakerLabel(label string) bool {
+	if label == "" || len(label) > 24 {
+		return false
+	}
+	parts := strings.Fields(label)
+	if len(parts) == 0 || len(parts) > 3 {
+		return false
+	}
+	if commonSpeakerLabels[strings.ToUpper(label)] {
+		return true
+	}
+	return isAllCapsNameLabel(label)
+}
+
+func isAllCapsNameLabel(label string) bool {
+	hasLetter := false
+	for _, r := range label {
+		switch {
+		case unicode.IsLetter(r):
+			hasLetter = true
+			if unicode.IsLower(r) {
+				return false
+			}
+		case unicode.IsSpace(r), r == '.', r == '\'', r == '’', r == '-':
+		default:
+			return false
+		}
+	}
+	return hasLetter
 }
 
 func isCaptionOnlyLine(line string) bool {
@@ -343,6 +388,16 @@ var commonSingleWordNoise = map[string]bool{
 	"well":   true,
 	"yeah":   true,
 	"you":    true,
+}
+
+var commonSpeakerLabels = map[string]bool{
+	"ALL":       true,
+	"ANNOUNCER": true,
+	"BOTH":      true,
+	"MAN":       true,
+	"RADIO":     true,
+	"TV":        true,
+	"WOMAN":     true,
 }
 
 var malformedPhraseStarters = map[string]bool{
