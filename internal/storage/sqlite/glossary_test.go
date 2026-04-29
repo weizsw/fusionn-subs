@@ -174,11 +174,12 @@ func TestGlossaryStorePromotesCommonEntryAcrossMedia(t *testing.T) {
 }
 
 func TestGlossaryStoreTimestampsUseLocalTime(t *testing.T) {
-	t.Setenv("TZ", "Asia/Shanghai")
-	loc, err := time.LoadLocation("Asia/Shanghai")
-	if err != nil {
-		t.Fatalf("load location: %v", err)
-	}
+	loc := time.FixedZone("TEST_LOCAL", 3*60*60)
+	previousLocal := time.Local
+	time.Local = loc
+	t.Cleanup(func() {
+		time.Local = previousLocal
+	})
 
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "glossary.db"))
