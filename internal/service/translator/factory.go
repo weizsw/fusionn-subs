@@ -11,7 +11,12 @@ import (
 )
 
 type Translator interface {
-	Translate(ctx context.Context, msg types.JobMessage) (string, error)
+	Translate(ctx context.Context, req Request) (string, error)
+}
+
+type Request struct {
+	Job              types.JobMessage
+	ExtraInstruction string
 }
 
 type ConfigUpdater interface {
@@ -27,10 +32,10 @@ type FallbackTranslator struct {
 	translators []namedTranslator
 }
 
-func (f *FallbackTranslator) Translate(ctx context.Context, msg types.JobMessage) (string, error) {
+func (f *FallbackTranslator) Translate(ctx context.Context, req Request) (string, error) {
 	var lastErr error
 	for _, nt := range f.translators {
-		out, err := nt.translator.Translate(ctx, msg)
+		out, err := nt.translator.Translate(ctx, req)
 		if err == nil {
 			return out, nil
 		}
@@ -68,11 +73,11 @@ func NewTranslator(ctx context.Context, cfg *config.Config) (Translator, error) 
 		for _, p := range cfg.Translator.Providers {
 			var t Translator
 			switch p {
-			case "gemini":
+			case config.ProviderGemini:
 				t = NewGeminiTranslator(ctx, cfg.Gemini, targetLang, outputSuffix)
-			case "openrouter":
+			case config.ProviderOpenRouter:
 				t = NewOpenRouterTranslator(cfg.OpenRouter, targetLang, outputSuffix)
-			case "local_llm":
+			case config.ProviderLocalLLM:
 				t = NewLocalLLMTranslator(cfg.LocalLLM, targetLang, outputSuffix)
 			default:
 				return nil, fmt.Errorf("unknown translator provider: %q", p)
