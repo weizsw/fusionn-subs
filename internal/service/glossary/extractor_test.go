@@ -188,6 +188,49 @@ MAN: SO15 arrived.
 	}
 }
 
+func TestExtractCandidatesFiltersCaptionOnlyLinesAfterSpeakerLabels(t *testing.T) {
+	found := extractCandidateMap(t, "episode.srt", `1
+00:00:01,000 --> 00:00:03,000
+MAN: [Door Opens]
+`, ExtractOptions{})
+
+	if _, ok := found["door opens"]; ok {
+		t.Fatalf("did not expect Door Opens candidate, got %#v", found)
+	}
+}
+
+func TestExtractCandidatesFiltersNamedSpeakerLabels(t *testing.T) {
+	found := extractCandidateMap(t, "episode.srt", `1
+00:00:01,000 --> 00:00:03,000
+CAREY: SO15 arrived.
+
+2
+00:00:04,000 --> 00:00:06,000
+CAREY: We need help.
+`, ExtractOptions{})
+
+	if _, ok := found["carey"]; ok {
+		t.Fatalf("did not expect Carey speaker label candidate, got %#v", found)
+	}
+	if _, ok := found["so15"]; !ok {
+		t.Fatalf("expected SO15 candidate, got %#v", found)
+	}
+}
+
+func TestExtractCandidatesKeepsNonSpeakerColonContent(t *testing.T) {
+	found := extractCandidateMap(t, "episode.srt", `1
+00:00:01,000 --> 00:00:03,000
+Case: DCI Carey briefed SO15.
+`, ExtractOptions{})
+
+	if _, ok := found["dci carey"]; !ok {
+		t.Fatalf("expected DCI Carey candidate, got %#v", found)
+	}
+	if _, ok := found["so15"]; !ok {
+		t.Fatalf("expected SO15 candidate, got %#v", found)
+	}
+}
+
 func TestExtractCandidatesIncludesExpandedTermShapes(t *testing.T) {
 	found := extractCandidateMap(t, "episode.srt", `1
 00:00:01,000 --> 00:00:03,000
