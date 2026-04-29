@@ -2,6 +2,7 @@ package glossary
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -58,5 +59,52 @@ func TestGenerateResponseValidateRejectsInvalidConfidence(t *testing.T) {
 	}}}).Validate()
 	if err == nil || !strings.Contains(err.Error(), "confidence") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestGlossaryPromptUsesResponseSchemaAndCandidateFieldNames(t *testing.T) {
+	if !strings.Contains(glossarySystemPrompt, "source_term") {
+		t.Fatalf("system prompt = %q, missing source_term response schema", glossarySystemPrompt)
+	}
+
+	prompt, err := buildGlossaryUserPrompt(GenerateRequest{
+		Candidates: []Candidate{{
+			Term:           "SO15",
+			NormalizedTerm: "so15",
+			Frequency:      3,
+			Snippets:       []string{"SO15 asked DCI Carey"},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("build prompt: %v", err)
+	}
+
+	var payload struct {
+		Candidates []map[string]any `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(prompt), &payload); err != nil {
+		t.Fatalf("decode prompt: %v", err)
+	}
+	if got := payload.Candidates[0]["source_term"]; got != "SO15" {
+		t.Fatalf("candidate source_term = %v, want SO15; prompt = %s", got, prompt)
+	}
+	if got := payload.Candidates[0]["normalized_term"]; got != "so15" {
+		t.Fatalf("candidate normalized_term = %v, want so15; prompt = %s", got, prompt)
+	}
+}
+
+func TestGlossarySystemPromptDescribesSelectiveGeneration(t *testing.T) {
+	for _, want := range []string{
+		"brand|product",
+		"Return entries only for candidates likely to cause consistency problems",
+		"Skip common real-world places with standard translations, such as New York",
+		"Skip ordinary street names or addresses, such as Madison Avenue",
+		"Skip malformed phrases such as Have Carbone",
+		"Skip generic speaker labels and caption descriptions",
+		"Skip common abbreviations with stable obvious translations, such as OK or TV",
+	} {
+		if !strings.Contains(glossarySystemPrompt, want) {
+			t.Fatalf("system prompt missing %q:\n%s", want, glossarySystemPrompt)
+		}
 	}
 }
