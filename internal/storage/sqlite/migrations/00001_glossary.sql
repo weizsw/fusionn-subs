@@ -5,9 +5,9 @@ create table if not exists glossary_terms (
     media_key text,
     normalized_term text not null,
     display_term text not null,
-    created_at datetime not null default current_timestamp,
-    updated_at datetime not null default current_timestamp,
-    last_seen_at datetime not null default current_timestamp
+    created_at datetime not null default (datetime('now','localtime')),
+    updated_at datetime not null default (datetime('now','localtime')),
+    last_seen_at datetime not null default (datetime('now','localtime'))
 );
 
 create unique index if not exists idx_glossary_terms_media_unique
@@ -30,9 +30,9 @@ create table if not exists glossary_variants (
     source text not null check (source in ('generated', 'promoted', 'curated')),
     confidence real not null,
     evidence_count integer not null default 0,
-    created_at datetime not null default current_timestamp,
-    updated_at datetime not null default current_timestamp,
-    last_seen_at datetime not null default current_timestamp
+    created_at datetime not null default (datetime('now','localtime')),
+    updated_at datetime not null default (datetime('now','localtime')),
+    last_seen_at datetime not null default (datetime('now','localtime'))
 );
 
 create index if not exists idx_glossary_variants_term_language_status
@@ -51,7 +51,7 @@ create table if not exists glossary_observations (
     episode integer not null default 0,
     snippet text not null default '',
     confidence real not null,
-    created_at datetime not null default current_timestamp
+    created_at datetime not null default (datetime('now','localtime'))
 );
 
 create index if not exists idx_glossary_observations_variant_created
@@ -69,7 +69,7 @@ create table if not exists glossary_jobs (
     subtitle_path_hash text not null,
     status text not null,
     error text not null default '',
-    created_at datetime not null default current_timestamp,
+    created_at datetime not null default (datetime('now','localtime')),
     completed_at datetime
 );
 
