@@ -212,7 +212,7 @@ func isAllCapsNameLabel(label string) bool {
 			if unicode.IsLower(r) {
 				return false
 			}
-		case unicode.IsSpace(r), r == '.', r == '\'', r == '’', r == '-':
+		case unicode.IsDigit(r), unicode.IsSpace(r), r == '.', r == '\'', r == '’', r == '-':
 		default:
 			return false
 		}
