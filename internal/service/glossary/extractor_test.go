@@ -282,6 +282,23 @@ Dr. House briefed DCI Carey about Hermès.
 	}
 }
 
+func TestExtractCandidatesIncludesUnicodeLatinInitials(t *testing.T) {
+	found := extractCandidateMap(t, "episode.srt", `1
+00:00:01,000 --> 00:00:03,000
+Élodie met Álvaro Morte near Łukasz.
+
+2
+00:00:04,000 --> 00:00:06,000
+Carey asked Élodie whether Łukasz saw SO15.
+`, ExtractOptions{})
+
+	for _, term := range []string{"élodie", "álvaro morte", "łukasz"} {
+		if _, ok := found[term]; !ok {
+			t.Fatalf("expected %q candidate, got %#v", term, found)
+		}
+	}
+}
+
 func TestExtractCandidatesNormalizesPossessiveVariants(t *testing.T) {
 	found := extractCandidateMap(t, "episode.srt", `1
 00:00:01,000 --> 00:00:03,000
