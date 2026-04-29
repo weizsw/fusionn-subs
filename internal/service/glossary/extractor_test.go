@@ -194,7 +194,7 @@ Style: Default_1,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,10
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,让 Carbone 承办餐饮\N{\rDefault_1}Have Carbone cater.
+`+"Dia"+`logue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,让 Carbone 承办餐饮\N{\rDefault_1}Have Carbone cater.
 `, ExtractOptions{})
 
 	if _, ok := found["default"]; ok {
@@ -286,7 +286,7 @@ WOMAN 2: DCI Carey answered.
 	}
 	for _, term := range []string{"so15", "dci carey"} {
 		if _, ok := found[term]; !ok {
-			t.Fatalf("expected %q dialogue candidate, got %#v", term, found)
+			t.Fatalf("expected %q subtitle text candidate, got %#v", term, found)
 		}
 	}
 }
