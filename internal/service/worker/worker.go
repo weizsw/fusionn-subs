@@ -28,8 +28,13 @@ type Config struct {
 	MaxTranslationRetries int
 }
 
+type GlossaryPayload struct {
+	Terminology         []translator.Terminology
+	BuildTerminologyMap bool
+}
+
 type GlossaryPreparer interface {
-	Prepare(ctx context.Context, msg types.JobMessage) (string, error)
+	Prepare(ctx context.Context, msg types.JobMessage) (GlossaryPayload, error)
 }
 
 type Worker struct {
@@ -138,13 +143,13 @@ func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
 }
 
 func (w *Worker) translateJob(ctx context.Context, msg types.JobMessage) (string, error) {
-	extraInstruction := ""
+	glossaryPayload := GlossaryPayload{}
 	if w.glossary != nil {
-		block, err := w.glossary.Prepare(ctx, msg)
+		payload, err := w.glossary.Prepare(ctx, msg)
 		if err != nil {
 			return "", fmt.Errorf("prepare glossary: %w", err)
 		}
-		extraInstruction = block
+		glossaryPayload = payload
 	}
 
 	var lastErr error
@@ -160,8 +165,9 @@ func (w *Worker) translateJob(ctx context.Context, msg types.JobMessage) (string
 
 		var err error
 		chsPath, err := w.translator.Translate(ctx, translator.Request{
-			Job:              msg,
-			ExtraInstruction: extraInstruction,
+			Job:                 msg,
+			Terminology:         glossaryPayload.Terminology,
+			BuildTerminologyMap: glossaryPayload.BuildTerminologyMap,
 		})
 		if err == nil {
 			if attempt > 1 {

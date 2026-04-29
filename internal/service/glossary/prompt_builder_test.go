@@ -1,12 +1,12 @@
 package glossary
 
 import (
-	"strings"
+	"reflect"
 	"testing"
 	"time"
 )
 
-func TestBuildPromptPrefersMediaOverCommon(t *testing.T) {
+func TestBuildTerminologyPrefersMediaOverCommon(t *testing.T) {
 	now := time.Now()
 	entries := []PromptEntry{
 		{
@@ -14,7 +14,6 @@ func TestBuildPromptPrefersMediaOverCommon(t *testing.T) {
 			NormalizedTerm: "so15",
 			DisplayTerm:    "SO15",
 			TargetText:     "SO15 common",
-			Definition:     "Common meaning",
 			Confidence:     0.95,
 			EvidenceCount:  4,
 			Status:         StatusActive,
@@ -22,37 +21,33 @@ func TestBuildPromptPrefersMediaOverCommon(t *testing.T) {
 			LastSeenAt:     now,
 		},
 		{
-			Scope:           ScopeMedia,
-			MediaKey:        "tvdb:355620",
-			NormalizedTerm:  "so15",
-			DisplayTerm:     "SO15",
-			TargetText:      "SO15",
-			Definition:      "The Capture usage",
-			TranslationMode: TranslationModePreserve,
-			Confidence:      0.90,
-			EvidenceCount:   2,
-			Status:          StatusActive,
-			Source:          SourceGenerated,
-			LastSeenAt:      now,
+			Scope:          ScopeMedia,
+			MediaKey:       "tvdb:355620",
+			NormalizedTerm: "so15",
+			DisplayTerm:    "SO15",
+			TargetText:     "SO15",
+			Confidence:     0.90,
+			EvidenceCount:  2,
+			Status:         StatusActive,
+			Source:         SourceGenerated,
+			LastSeenAt:     now,
 		},
 	}
 
-	got := BuildPrompt(entries, PromptOptions{
+	got := BuildTerminology(entries, PromptOptions{
 		MediaKey:            "tvdb:355620",
 		InjectMinConfidence: 0.80,
 		MaxPromptEntries:    10,
 	})
+	want := []Terminology{{Source: "SO15", Target: "SO15"}}
 
-	if !strings.Contains(got, `SO15: keep as "SO15"`) {
-		t.Fatalf("prompt = %s", got)
-	}
-	if strings.Contains(got, "Common meaning") {
-		t.Fatalf("common entry should not win: %s", got)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("terminology = %#v, want %#v", got, want)
 	}
 }
 
-func TestBuildPromptFiltersLowConfidence(t *testing.T) {
-	got := BuildPrompt([]PromptEntry{
+func TestBuildTerminologyFiltersLowConfidence(t *testing.T) {
+	got := BuildTerminology([]PromptEntry{
 		{
 			Scope:          ScopeMedia,
 			MediaKey:       "m",
@@ -64,7 +59,24 @@ func TestBuildPromptFiltersLowConfidence(t *testing.T) {
 		},
 	}, PromptOptions{MediaKey: "m", InjectMinConfidence: 0.80, MaxPromptEntries: 10})
 
-	if got != "" {
-		t.Fatalf("prompt = %q", got)
+	if !reflect.DeepEqual(got, []Terminology(nil)) {
+		t.Fatalf("terminology = %#v, want nil", got)
+	}
+}
+
+func TestBuildTerminologyFallsBackToNormalizedTerm(t *testing.T) {
+	got := BuildTerminology([]PromptEntry{
+		{
+			Scope:          ScopeCommon,
+			NormalizedTerm: " central city ",
+			TargetText:     "中城",
+			Confidence:     0.90,
+			Status:         StatusActive,
+		},
+	}, PromptOptions{InjectMinConfidence: 0.80, MaxPromptEntries: 10})
+	want := []Terminology{{Source: "central city", Target: "中城"}}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("terminology = %#v, want %#v", got, want)
 	}
 }

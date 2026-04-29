@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/fusionn-subs/internal/service/translator"
@@ -20,20 +21,24 @@ func (f *fakeTranslator) Translate(_ context.Context, req translator.Request) (s
 }
 
 type fakeGlossary struct {
-	block string
-	err   error
+	payload GlossaryPayload
+	err     error
 }
 
-func (f fakeGlossary) Prepare(context.Context, types.JobMessage) (string, error) {
-	return f.block, f.err
+func (f fakeGlossary) Prepare(context.Context, types.JobMessage) (GlossaryPayload, error) {
+	return f.payload, f.err
 }
 
-func TestTranslateJobPassesGlossaryInstruction(t *testing.T) {
+func TestTranslateJobPassesGlossaryTerminology(t *testing.T) {
 	trans := &fakeTranslator{}
+	terminology := []translator.Terminology{{Source: "SO15", Target: "SO15"}}
 	w := &Worker{
 		cfg:        Config{MaxTranslationRetries: 1},
 		translator: trans,
-		glossary:   fakeGlossary{block: "Glossary guidance:\n- SO15: keep as \"SO15\""},
+		glossary: fakeGlossary{payload: GlossaryPayload{
+			Terminology:         terminology,
+			BuildTerminologyMap: true,
+		}},
 	}
 
 	_, err := w.translateJob(context.Background(), types.JobMessage{
@@ -44,8 +49,14 @@ func TestTranslateJobPassesGlossaryInstruction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("translate job: %v", err)
 	}
-	if trans.req.ExtraInstruction == "" {
-		t.Fatal("missing glossary instruction")
+	if !reflect.DeepEqual(trans.req.Terminology, terminology) {
+		t.Fatalf("terminology = %#v, want %#v", trans.req.Terminology, terminology)
+	}
+	if !trans.req.BuildTerminologyMap {
+		t.Fatal("expected build terminology map")
+	}
+	if trans.req.ExtraInstruction != "" {
+		t.Fatalf("extra instruction = %q, want empty", trans.req.ExtraInstruction)
 	}
 }
 

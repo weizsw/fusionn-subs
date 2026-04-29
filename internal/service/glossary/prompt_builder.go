@@ -1,14 +1,13 @@
 package glossary
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 )
 
-func BuildPrompt(entries []PromptEntry, opts PromptOptions) string {
+func BuildTerminology(entries []PromptEntry, opts PromptOptions) []Terminology {
 	if opts.MaxPromptEntries <= 0 {
-		return ""
+		return nil
 	}
 
 	winners := make(map[string]PromptEntry)
@@ -33,28 +32,23 @@ func BuildPrompt(entries []PromptEntry, opts PromptOptions) string {
 	if len(selected) > opts.MaxPromptEntries {
 		selected = selected[:opts.MaxPromptEntries]
 	}
-	if len(selected) == 0 {
-		return ""
-	}
 
-	var b strings.Builder
-	b.WriteString("Glossary guidance for this subtitle:")
+	terminology := make([]Terminology, 0, len(selected))
 	for _, entry := range selected {
-		b.WriteString("\n- ")
-		b.WriteString(promptDisplayTerm(entry))
-		b.WriteString(": ")
-		switch entry.TranslationMode {
-		case TranslationModePreserve:
-			b.WriteString(fmt.Sprintf("keep as %q", entry.TargetText))
-		default:
-			b.WriteString(fmt.Sprintf("use %q", entry.TargetText))
+		source := promptDisplayTerm(entry)
+		target := strings.TrimSpace(entry.TargetText)
+		if source == "" || target == "" {
+			continue
 		}
-		if definition := strings.TrimSpace(entry.Definition); definition != "" {
-			b.WriteString("; definition: ")
-			b.WriteString(definition)
-		}
+		terminology = append(terminology, Terminology{
+			Source: source,
+			Target: target,
+		})
 	}
-	return b.String()
+	if len(terminology) == 0 {
+		return nil
+	}
+	return terminology
 }
 
 func isPromptEligible(entry PromptEntry, opts PromptOptions) bool {

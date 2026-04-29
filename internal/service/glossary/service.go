@@ -36,26 +36,33 @@ func NewService(cfg ServiceConfig, store Store, llm LLMClient) *Service {
 	return &Service{cfg: cfg, store: store, llm: llm}
 }
 
-func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (string, error) {
+func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (Payload, error) {
 	if s == nil || !s.cfg.Enabled {
-		return "", nil
+		return Payload{}, nil
 	}
 	if s.store == nil {
-		return "", fmt.Errorf("glossary store is required")
+		return Payload{}, fmt.Errorf("glossary store is required")
 	}
 
 	mediaKey := ResolveMediaKey(msg)
 	entries, err := s.store.LoadPromptEntries(ctx, mediaKey.Value, s.cfg.TargetLanguage)
 	if err != nil {
-		return "", s.recordFailed(ctx, msg, mediaKey.Value, fmt.Errorf("load glossary entries: %w", err))
+		return Payload{}, s.recordFailed(ctx, msg, mediaKey.Value, fmt.Errorf("load glossary entries: %w", err))
 	}
 
-	promptFromEntries := func() string {
-		return BuildPrompt(entries, PromptOptions{
-			MediaKey:            mediaKey.Value,
-			InjectMinConfidence: s.cfg.InjectMinConfidence,
-			MaxPromptEntries:    s.cfg.MaxPromptEntries,
-		})
+	payloadFromEntries := func(entries []PromptEntry) Payload {
+		return Payload{
+			Terminology: BuildTerminology(entries, PromptOptions{
+				MediaKey:            mediaKey.Value,
+				InjectMinConfidence: s.cfg.InjectMinConfidence,
+				MaxPromptEntries:    s.cfg.MaxPromptEntries,
+			}),
+			BuildTerminologyMap: true,
+		}
+	}
+
+	currentPayload := func() Payload {
+		return payloadFromEntries(entries)
 	}
 
 	candidates, extractErr := ExtractCandidates(msg.SubtitlePath, ExtractOptions{
@@ -67,17 +74,17 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (string, er
 	if extractErr != nil {
 		logger.Warnf("glossary extraction skipped: %v", extractErr)
 		if err := s.recordCompleted(ctx, msg, mediaKey.Value); err != nil {
-			return "", err
+			return Payload{}, err
 		}
-		return promptFromEntries(), nil
+		return currentPayload(), nil
 	}
 
 	if s.llm == nil {
 		logger.Warn("glossary LLM generation skipped: no client configured")
 		if err := s.recordCompleted(ctx, msg, mediaKey.Value); err != nil {
-			return "", err
+			return Payload{}, err
 		}
-		return promptFromEntries(), nil
+		return currentPayload(), nil
 	}
 
 	llmCtx := ctx
@@ -97,9 +104,9 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (string, er
 	if err != nil {
 		logger.Warnf("glossary LLM generation skipped: %v", err)
 		if err := s.recordCompleted(ctx, msg, mediaKey.Value); err != nil {
-			return "", err
+			return Payload{}, err
 		}
-		return promptFromEntries(), nil
+		return currentPayload(), nil
 	}
 
 	result, err := s.store.UpsertGeneratedEntries(ctx, UpsertRequest{
@@ -114,7 +121,7 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (string, er
 		},
 	})
 	if err != nil {
-		return "", s.recordFailed(ctx, msg, mediaKey.Value, fmt.Errorf("store glossary entries: %w", err))
+		return Payload{}, s.recordFailed(ctx, msg, mediaKey.Value, fmt.Errorf("store glossary entries: %w", err))
 	}
 	logger.Infof("Glossary entries: created=%d merged=%d candidates=%d suppressed=%d", result.Created, result.Merged, result.Candidates, result.Suppressed)
 
@@ -123,21 +130,17 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (string, er
 		MinConfidence:         s.cfg.PromoteMinConfidence,
 		MinDistinctMediaCount: s.cfg.PromoteMinMediaCount,
 	}); err != nil {
-		return "", s.recordFailed(ctx, msg, mediaKey.Value, fmt.Errorf("promote glossary entries: %w", err))
+		return Payload{}, s.recordFailed(ctx, msg, mediaKey.Value, fmt.Errorf("promote glossary entries: %w", err))
 	}
 
 	entries, err = s.store.LoadPromptEntries(ctx, mediaKey.Value, s.cfg.TargetLanguage)
 	if err != nil {
-		return "", s.recordFailed(ctx, msg, mediaKey.Value, fmt.Errorf("reload glossary entries: %w", err))
+		return Payload{}, s.recordFailed(ctx, msg, mediaKey.Value, fmt.Errorf("reload glossary entries: %w", err))
 	}
 	if err := s.recordCompleted(ctx, msg, mediaKey.Value); err != nil {
-		return "", err
+		return Payload{}, err
 	}
-	return BuildPrompt(entries, PromptOptions{
-		MediaKey:            mediaKey.Value,
-		InjectMinConfidence: s.cfg.InjectMinConfidence,
-		MaxPromptEntries:    s.cfg.MaxPromptEntries,
-	}), nil
+	return payloadFromEntries(entries), nil
 }
 
 func (s *Service) recordCompleted(ctx context.Context, msg types.JobMessage, mediaKey string) error {

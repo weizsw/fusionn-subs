@@ -31,6 +31,18 @@ type LocalLLMTranslator struct {
 	outputSuffix   string
 }
 
+type localLLMSnapshot struct {
+	baseURL        string
+	apiKey         string
+	model          string
+	endpoint       string
+	instruction    string
+	rateLimit      int
+	maxBatchSize   int
+	timeout        time.Duration
+	targetLanguage string
+}
+
 // NewLocalLLMTranslator creates a new local LLM (custom server) translator
 func NewLocalLLMTranslator(cfg config.LocalLLMConfig, targetLang, outputSuffix string) *LocalLLMTranslator {
 	scriptPath := os.Getenv("LLM_SUBTRANS_SCRIPT_PATH")
@@ -83,55 +95,23 @@ func (t *LocalLLMTranslator) Translate(ctx context.Context, req Request) (string
 	outputPath := msg.OutputPath(t.outputSuffix)
 
 	t.mu.RLock()
-	baseURL := t.baseURL
-	apiKey := t.apiKey
-	model := t.model
-	endpoint := t.endpoint
-	instruction := t.instruction
-	rateLimit := t.rateLimit
-	maxBatchSize := t.maxBatchSize
-	timeout := t.timeout
-	targetLanguage := t.targetLanguage
+	snapshot := localLLMSnapshot{
+		baseURL:        t.baseURL,
+		apiKey:         t.apiKey,
+		model:          t.model,
+		endpoint:       t.endpoint,
+		instruction:    t.instruction,
+		rateLimit:      t.rateLimit,
+		maxBatchSize:   t.maxBatchSize,
+		timeout:        t.timeout,
+		targetLanguage: t.targetLanguage,
+	}
 	t.mu.RUnlock()
 
-	ctxTimeout, cancel := context.WithTimeout(ctx, timeout)
+	ctxTimeout, cancel := context.WithTimeout(ctx, snapshot.timeout)
 	defer cancel()
 
-	args := []string{
-		msg.SubtitlePath,
-		"-o", outputPath,
-		"-l", targetLanguage,
-		"-s", baseURL,
-		"-e", endpoint,
-	}
-
-	if strings.TrimSpace(apiKey) != "" {
-		args = append(args, "-k", apiKey)
-	}
-
-	if strings.TrimSpace(model) != "" {
-		args = append(args, "-m", model)
-	}
-
-	if strings.Contains(strings.ToLower(endpoint), "chat") {
-		args = append(args, "--chat", "--systemmessages")
-	}
-
-	if mediaTitle := strings.TrimSpace(msg.MediaTitle); mediaTitle != "" {
-		args = append(args, "--moviename", mediaTitle)
-	}
-
-	if instruction := combineInstructions(instruction, req.ExtraInstruction); instruction != "" {
-		args = append(args, "--instruction", instruction)
-	}
-
-	if rateLimit > 0 {
-		args = append(args, "--ratelimit", strconv.Itoa(rateLimit))
-	}
-
-	if maxBatchSize > 0 {
-		args = append(args, "--maxbatchsize", strconv.Itoa(maxBatchSize))
-	}
+	args := buildLocalLLMArgs(req, outputPath, snapshot)
 
 	cmd := exec.CommandContext(ctxTimeout, t.scriptPath, args...)
 	if t.workDir != "" {
@@ -150,6 +130,47 @@ func (t *LocalLLMTranslator) Translate(ctx context.Context, req Request) (string
 	}
 
 	return resultPath, nil
+}
+
+func buildLocalLLMArgs(req Request, outputPath string, snapshot localLLMSnapshot) []string {
+	msg := req.Job
+	args := []string{
+		msg.SubtitlePath,
+		"-o", outputPath,
+		"-l", snapshot.targetLanguage,
+		"-s", snapshot.baseURL,
+		"-e", snapshot.endpoint,
+	}
+
+	if strings.TrimSpace(snapshot.apiKey) != "" {
+		args = append(args, "-k", snapshot.apiKey)
+	}
+
+	if strings.TrimSpace(snapshot.model) != "" {
+		args = append(args, "-m", snapshot.model)
+	}
+
+	if strings.Contains(strings.ToLower(snapshot.endpoint), "chat") {
+		args = append(args, "--chat", "--systemmessages")
+	}
+
+	if mediaTitle := strings.TrimSpace(msg.MediaTitle); mediaTitle != "" {
+		args = append(args, "--moviename", mediaTitle)
+	}
+
+	if instruction := combineInstructions(snapshot.instruction, req.ExtraInstruction); instruction != "" {
+		args = append(args, "--instruction", instruction)
+	}
+
+	if snapshot.rateLimit > 0 {
+		args = append(args, "--ratelimit", strconv.Itoa(snapshot.rateLimit))
+	}
+
+	if snapshot.maxBatchSize > 0 {
+		args = append(args, "--maxbatchsize", strconv.Itoa(snapshot.maxBatchSize))
+	}
+
+	return appendTerminologyArgs(args, req)
 }
 
 // UpdateFromConfig reloads translator settings from the full config (hot-reload)

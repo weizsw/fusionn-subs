@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/fusionn-subs/internal/config"
 	"github.com/fusionn-subs/internal/types"
@@ -15,8 +16,10 @@ type Translator interface {
 }
 
 type Request struct {
-	Job              types.JobMessage
-	ExtraInstruction string
+	Job                 types.JobMessage
+	ExtraInstruction    string
+	Terminology         []Terminology
+	BuildTerminologyMap bool
 }
 
 type ConfigUpdater interface {
@@ -71,20 +74,27 @@ func NewTranslator(ctx context.Context, cfg *config.Config) (Translator, error) 
 	if len(cfg.Translator.Providers) > 0 {
 		list := make([]namedTranslator, 0, len(cfg.Translator.Providers))
 		for _, p := range cfg.Translator.Providers {
+			provider := strings.TrimSpace(p)
 			var t Translator
-			switch p {
+			switch provider {
 			case config.ProviderGemini:
 				t = NewGeminiTranslator(ctx, cfg.Gemini, targetLang, outputSuffix)
 			case config.ProviderOpenRouter:
 				t = NewOpenRouterTranslator(cfg.OpenRouter, targetLang, outputSuffix)
+			case config.ProviderOpenAI:
+				t = NewOpenAITranslator(cfg.OpenAI, targetLang, outputSuffix)
 			case config.ProviderLocalLLM:
 				t = NewLocalLLMTranslator(cfg.LocalLLM, targetLang, outputSuffix)
 			default:
 				return nil, fmt.Errorf("unknown translator provider: %q", p)
 			}
-			list = append(list, namedTranslator{name: p, translator: t})
+			list = append(list, namedTranslator{name: provider, translator: t})
 		}
-		logger.Infof("🤖 Using providers: %v", cfg.Translator.Providers)
+		providers := make([]string, 0, len(list))
+		for _, nt := range list {
+			providers = append(providers, nt.name)
+		}
+		logger.Infof("🤖 Using providers: %v", providers)
 		if len(list) == 1 {
 			return list[0].translator, nil
 		}
@@ -106,5 +116,5 @@ func NewTranslator(ctx context.Context, cfg *config.Config) (Translator, error) 
 		return NewOpenRouterTranslator(cfg.OpenRouter, targetLang, outputSuffix), nil
 	}
 
-	return nil, fmt.Errorf("no translator configured: gemini.api_key is required")
+	return nil, fmt.Errorf("no translator configured: set translator.providers or configure gemini/openrouter/openai credentials")
 }

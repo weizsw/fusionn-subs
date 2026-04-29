@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/fusionn-subs/internal/types"
@@ -70,7 +71,7 @@ SO15 asked DCI Carey.
 		Confidence:      0.9,
 	}}}, fakeLLM{err: errors.New("llm down")})
 
-	block, err := svc.Prepare(context.Background(), types.JobMessage{
+	payload, err := svc.Prepare(context.Background(), types.JobMessage{
 		JobID:        "job-1",
 		MediaTitle:   "The Capture",
 		MediaType:    "series",
@@ -79,7 +80,11 @@ SO15 asked DCI Carey.
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	if block == "" {
-		t.Fatal("expected existing glossary block")
+	want := Payload{
+		Terminology:         []Terminology{{Source: "SO15", Target: "SO15"}},
+		BuildTerminologyMap: true,
+	}
+	if !reflect.DeepEqual(payload, want) {
+		t.Fatalf("payload = %#v, want %#v", payload, want)
 	}
 }

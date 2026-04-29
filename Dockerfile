@@ -18,6 +18,7 @@ FROM python:3.11-slim
 
 ENV LLM_SUBTRANS_DIR=/opt/llm-subtrans \
     LLM_SUBTRANS_SCRIPT_PATH=/opt/llm-subtrans/llm-subtrans.sh \
+    OPENAI_SCRIPT_PATH=/opt/llm-subtrans/gpt-subtrans.sh \
     GEMINI_SCRIPT_PATH=/opt/llm-subtrans/gemini-subtrans.sh \
     GEMINI_WORKDIR=/opt/llm-subtrans
 
@@ -27,7 +28,9 @@ RUN git clone --depth 1 https://github.com/machinewrapped/llm-subtrans.git ${LLM
 
 WORKDIR ${LLM_SUBTRANS_DIR}
 
-RUN set -e; printf "2\n\n2\n\n" | ./install.sh
+RUN set -e; printf "2\n\na\n\n\n\n\n\n" | ./install.sh
+
+RUN test -x "${LLM_SUBTRANS_SCRIPT_PATH}" && test -x "${GEMINI_SCRIPT_PATH}" && test -x "${OPENAI_SCRIPT_PATH}"
 
 # Force unbuffered Python output so translation progress streams in real-time
 RUN sed -i 's|envsubtrans/bin/python |envsubtrans/bin/python -u |g' *.sh

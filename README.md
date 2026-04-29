@@ -1,6 +1,6 @@
 # fusionn-subs
 
-Go worker that polls Redis for subtitle translation jobs, translates subtitles using AI (OpenRouter or Gemini), and posts callback payloads once translations are complete.
+Go worker that polls Redis for subtitle translation jobs, translates subtitles using AI (OpenRouter, OpenAI, or Gemini), and posts callback payloads once translations are complete.
 
 **Integration with [fusionn](https://github.com/weizsw/fusionn):** Automatically translates missing Chinese subtitles for media managed by Sonarr/Radarr.
 
@@ -38,9 +38,10 @@ Configuration is managed via YAML file with environment variable overrides.
 
 ### Provider Selection
 
-Choose **one** translation provider:
+Choose one or more translation providers in order:
 
 - **OpenRouter** (Recommended): Access to 100+ models from OpenAI, Anthropic, Google, Meta, etc.
+- **OpenAI**: Direct OpenAI API access through llm-subtrans `gpt-subtrans.sh`; supports `api_base` for custom OpenAI instances.
 - **Gemini**: Direct Google Gemini API access
 
 ### Config File
@@ -67,16 +68,35 @@ openrouter:
   rate_limit: 10                       # Default: 10 RPM (tune based on your plan)
 
 translator:
+  providers: ["openrouter"]
   target_language: "Chinese"
   output_suffix: "chs"
   max_translation_retries: 3           # Retry attempts for failed translations
 ```
 
+#### Option 2: OpenAI
+
+```yaml
+translator:
+  providers: ["openai"]
+  target_language: "Chinese"
+  output_suffix: "chs"
+
+openai:
+  api_key: ""                          # Or set OPENAI_API_KEY
+  model: "gpt-5-mini"
+  api_base: ""                         # Optional custom instance
+  use_httpx: false                     # Requires api_base
+  instruction: ""
+  max_batch_size: 20
+  rate_limit: 10
+```
+
 ### Automatic Glossary
 
-When `glossary.enabled` is true, fusionn-subs scans each subtitle locally, extracts terminology candidates, asks the configured glossary LLM for Chinese-oriented glossary entries, stores them in SQLite, and injects a compact glossary block into the translation instruction.
+When `glossary.enabled` is true, fusionn-subs scans each subtitle locally, extracts terminology candidates, asks the configured glossary LLM for Chinese-oriented glossary entries, stores them in SQLite, and passes selected entries to llm-subtrans as repeatable `--terminology SOURCE::TRANSLATION` arguments. It also enables llm-subtrans's `--build-terminology-map` for that job so terms remain consistent across batches.
 
-Glossary extraction and LLM failures do not block translation; existing glossary entries may still be injected. SQLite open, migration, corruption, or transaction failures are treated as service/job failures because persistence is not trustworthy.
+Glossary extraction and LLM failures do not block translation; existing glossary entries may still be passed to translation. SQLite open, migration, corruption, or transaction failures are treated as service/job failures because persistence is not trustworthy.
 
 ```yaml
 glossary:
@@ -118,6 +138,9 @@ openrouter:
 # Optional: Gemini config for evaluator (if not specified above)
 gemini:
   api_key: ""                          # Reused by evaluator if evaluator.gemini_api_key is empty
+
+translator:
+  providers: ["openrouter"]
 ```
 
 **Timezone Configuration:**
@@ -161,7 +184,7 @@ translator:
 - Cost-effective: evaluation is free (Gemini 3 Flash)
 - Safe: falls back to your configured `model` if evaluation fails
 
-#### Option 2: Gemini Direct
+#### Option 3: Gemini Direct
 
 ```yaml
 redis:
@@ -172,13 +195,19 @@ callback:
   url: "http://localhost:4664/api/v1/async_merge"
 
 gemini:
-  api_key: ""                       # Get from https://aistudio.google.com/apikey
-  model: "gemini-2.5-flash-latest"
-  instruction: ""                   # Custom translation instruction (optional)
-  max_batch_size: 20                # Tune for performance
-  rate_limit: 8                     # Depends on your Gemini plan
+  api_key: ""                         # Get from https://aistudio.google.com/apikey
+  instruction: ""                     # Custom translation instruction (optional)
+  primary_model:
+    name: "gemini-2.5-flash"
+    rate_limit: 8
+    max_batch_size: 20
+  secondary_model:
+    name: "gemini-2.5-pro"
+    rate_limit: 5
+    max_batch_size: 15
 
 translator:
+  providers: ["gemini"]
   target_language: "Chinese"
   output_suffix: "chs"
 ```
@@ -198,13 +227,17 @@ Override any config value using the format `FUSIONN_SUBS_<SECTION>_<KEY>`:
 | `FUSIONN_SUBS_OPENROUTER_API_KEY` | `sk-or-...` | OpenRouter API key |
 | `FUSIONN_SUBS_OPENROUTER_MODEL` | `openai/gpt-4o-mini` | OpenRouter model (ignored if auto_select_model is true) |
 | `FUSIONN_SUBS_OPENROUTER_AUTO_SELECT_MODEL` | `true` | Enable auto model selection |
-| `FUSIONN_SUBS_OPENROUTER_FALLBACK_MODEL` | `google/gemini-3-flash:free` | Fallback model for auto-selection |
 | `FUSIONN_SUBS_OPENROUTER_EVALUATOR_PROVIDER` | `gemini` | Evaluator provider |
 | `FUSIONN_SUBS_OPENROUTER_EVALUATOR_GEMINI_API_KEY` | `AIza...` | Gemini API key for evaluator |
 | `FUSIONN_SUBS_OPENROUTER_EVALUATOR_SCHEDULE_HOUR` | `3` | Hour (0-23) for daily evaluation |
+| **OpenAI** | | |
+| `FUSIONN_SUBS_OPENAI_API_KEY` | `sk-...` | OpenAI API key |
+| `FUSIONN_SUBS_OPENAI_MODEL` | `gpt-5-mini` | OpenAI model |
+| `FUSIONN_SUBS_OPENAI_API_BASE` | `https://api.openai.com/v1` | Optional custom OpenAI-compatible API base |
 | **Gemini** | | |
 | `FUSIONN_SUBS_GEMINI_API_KEY` | `AIza...` | Gemini API key |
-| `FUSIONN_SUBS_GEMINI_MODEL` | `gemini-2.5-flash` | Gemini model |
+| `FUSIONN_SUBS_GEMINI_PRIMARY_MODEL_NAME` | `gemini-2.5-flash` | Gemini primary model |
+| `FUSIONN_SUBS_GEMINI_SECONDARY_MODEL_NAME` | `gemini-2.5-pro` | Gemini secondary model |
 
 ## Project Structure
 
@@ -296,8 +329,8 @@ make build
 ## Architecture
 
 1. **Worker** polls Redis queue for translation jobs
-2. **Translator Factory** selects provider (OpenRouter or Gemini) based on config
-3. **Translator** executes appropriate script (`llm-subtrans.sh` or `gemini-subtrans.sh`)
+2. **Translator Factory** selects provider (OpenRouter, OpenAI, Gemini, or local LLM) based on config
+3. **Translator** executes appropriate script (`llm-subtrans.sh`, `gpt-subtrans.sh`, or `gemini-subtrans.sh`)
 4. **Callback Client** POSTs result to configured endpoint
 
 ### Job Message Format

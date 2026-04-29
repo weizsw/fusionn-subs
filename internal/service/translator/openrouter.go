@@ -93,7 +93,26 @@ func (t *OpenRouterTranslator) Translate(ctx context.Context, req Request) (stri
 	currentModel := t.model
 	t.mu.RUnlock()
 
-	// Build args for llm-subtrans.sh (OpenRouter default)
+	args := t.buildArgs(req, outputPath, currentModel)
+
+	cmd := exec.CommandContext(ctxTimeout, t.scriptPath, args...)
+	if t.workDir != "" {
+		cmd.Dir = t.workDir
+	}
+
+	// Pass API key via environment (security: not visible in process list)
+	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY="+t.apiKey, "PYTHONUNBUFFERED=1")
+
+	logger.Infof("🔄 Starting translation (OpenRouter): %s → %s", msg.SubtitlePath, outputPath)
+	logger.Infof("📦 Model: %s", currentModel)
+	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
+
+	resultPath, _, err := executeScript(cmd, outputPath)
+	return resultPath, err
+}
+
+func (t *OpenRouterTranslator) buildArgs(req Request, outputPath string, currentModel string) []string {
+	msg := req.Job
 	args := []string{
 		msg.SubtitlePath,
 		"-o", outputPath,
@@ -118,18 +137,5 @@ func (t *OpenRouterTranslator) Translate(ctx context.Context, req Request) (stri
 		args = append(args, "--maxbatchsize", strconv.Itoa(t.maxBatchSize))
 	}
 
-	cmd := exec.CommandContext(ctxTimeout, t.scriptPath, args...)
-	if t.workDir != "" {
-		cmd.Dir = t.workDir
-	}
-
-	// Pass API key via environment (security: not visible in process list)
-	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY="+t.apiKey, "PYTHONUNBUFFERED=1")
-
-	logger.Infof("🔄 Starting translation (OpenRouter): %s → %s", msg.SubtitlePath, outputPath)
-	logger.Infof("📦 Model: %s", currentModel)
-	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
-
-	resultPath, _, err := executeScript(cmd, outputPath)
-	return resultPath, err
+	return appendTerminologyArgs(args, req)
 }

@@ -8,7 +8,7 @@
 #
 # ⚠️  PROVIDERS: Set translator.providers to choose translation providers.
 #     If omitted, Gemini is the primary provider (requires API key and models).
-#     OpenRouter is optional. Local LLM can be used with any OpenAI-compatible server.
+#     OpenRouter and OpenAI are optional. Local LLM can be used with any OpenAI-compatible server.
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REDIS - Message queue for translation jobs
@@ -57,6 +57,21 @@ openrouter:
     schedule_hour: 3 # Hour (0-23) for daily evaluation (respects TZ env var, default: 3 AM local time)
 
 # ─────────────────────────────────────────────────────────────────────────────
+# OPENAI - Official OpenAI translation provider
+# ─────────────────────────────────────────────────────────────────────────────
+# Uses llm-subtrans OpenAI mode via gpt-subtrans.sh.
+# Only required when "openai" appears in translator.providers.
+openai:
+  api_key: ""                         # OpenAI API key (or use OPENAI_API_KEY)
+  model: "gpt-5-mini"                 # OpenAI model for translation
+  api_base: ""                        # Optional custom OpenAI-compatible API base
+  use_httpx: false                    # Only valid when api_base is set
+  instruction: ""                     # Custom translation instruction (optional)
+  rate_limit: 10                      # Requests per minute (default: 10)
+  max_batch_size: 20                  # Max subtitles per batch
+  timeout: 30m                        # Script timeout (default: 30m)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # GEMINI - AI Translation Provider (Primary)
 # ─────────────────────────────────────────────────────────────────────────────
 # Get API key from: https://aistudio.google.com/apikey
@@ -94,7 +109,7 @@ local_llm:
 # ─────────────────────────────────────────────────────────────────────────────
 translator:
   # providers: ["local_llm", "gemini"]  # Ordered fallback chain (optional)
-  # Valid: "gemini", "openrouter", "local_llm". Tries in order; falls back on failure.
+  # Valid: "gemini", "openrouter", "openai", "local_llm". Tries in order; falls back on failure.
   # If omitted, uses legacy behavior: Gemini (required), OpenRouter (optional).
   target_language: "Chinese" # Target translation language
   output_suffix: "chs" # Suffix for translated file (e.g., movie.chs.srt)

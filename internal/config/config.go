@@ -19,11 +19,13 @@ const (
 	DefaultCallbackTimeout    = 15 * time.Second
 	DefaultCallbackMaxRetries = 3
 	DefaultGeminiTimeout      = 30 * time.Minute
+	DefaultOpenAITimeout      = 30 * time.Minute
 	DefaultLocalLLMTimeout    = 30 * time.Minute
 	DefaultWorkerPollTimeout  = 5 * time.Second
 
 	ProviderGemini           = "gemini"
 	ProviderOpenRouter       = "openrouter"
+	ProviderOpenAI           = "openai"
 	ProviderLocalLLM         = "local_llm"
 	ProviderOpenAICompatible = "openai_compatible"
 
@@ -35,6 +37,7 @@ type Config struct {
 	Callback   CallbackConfig   `mapstructure:"callback"`
 	Gemini     GeminiConfig     `mapstructure:"gemini"`
 	OpenRouter OpenRouterConfig `mapstructure:"openrouter"`
+	OpenAI     OpenAIConfig     `mapstructure:"openai"`
 	LocalLLM   LocalLLMConfig   `mapstructure:"local_llm"`
 	Translator TranslatorConfig `mapstructure:"translator"`
 	Glossary   GlossaryConfig   `mapstructure:"glossary"`
@@ -73,6 +76,17 @@ type OpenRouterConfig struct {
 	RateLimit       int             `mapstructure:"rate_limit"`
 	AutoSelectModel bool            `mapstructure:"auto_select_model"`
 	Evaluator       EvaluatorConfig `mapstructure:"evaluator"`
+}
+
+type OpenAIConfig struct {
+	APIKey       string        `mapstructure:"api_key"`
+	Model        string        `mapstructure:"model"`
+	APIBase      string        `mapstructure:"api_base"`
+	UseHTTPX     bool          `mapstructure:"use_httpx"`
+	Instruction  string        `mapstructure:"instruction"`
+	RateLimit    int           `mapstructure:"rate_limit"`
+	MaxBatchSize int           `mapstructure:"max_batch_size"`
+	Timeout      time.Duration `mapstructure:"timeout"`
 }
 
 type LocalLLMConfig struct {
@@ -131,6 +145,7 @@ type GlossaryLLMConfig struct {
 var validProviders = map[string]bool{
 	ProviderGemini:     true,
 	ProviderOpenRouter: true,
+	ProviderOpenAI:     true,
 	ProviderLocalLLM:   true,
 }
 
@@ -313,6 +328,25 @@ func (c *Config) validateOpenRouterAutoSelectModel() error {
 	}
 	if c.OpenRouter.Evaluator.Model == "" {
 		c.OpenRouter.Evaluator.Model = "gemini-3-flash"
+	}
+	return nil
+}
+
+func (c *Config) validateOpenAISection() error {
+	if strings.TrimSpace(c.OpenAI.APIKey) == "" && strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) == "" {
+		return fmt.Errorf("openai.api_key or OPENAI_API_KEY is required when openai is in translator.providers")
+	}
+	if strings.TrimSpace(c.OpenAI.Model) == "" {
+		return fmt.Errorf("openai.model is required when openai is in translator.providers")
+	}
+	if c.OpenAI.UseHTTPX && strings.TrimSpace(c.OpenAI.APIBase) == "" {
+		return fmt.Errorf("openai.use_httpx requires openai.api_base")
+	}
+	if c.OpenAI.Timeout < 0 {
+		return fmt.Errorf("openai.timeout must be positive")
+	}
+	if c.OpenAI.Timeout == 0 {
+		c.OpenAI.Timeout = DefaultOpenAITimeout
 	}
 	return nil
 }
@@ -508,12 +542,17 @@ func (c *Config) Validate() error {
 						return err
 					}
 				}
+			case ProviderOpenAI:
+				if err := c.validateOpenAISection(); err != nil {
+					return err
+				}
 			case ProviderLocalLLM:
 				if c.LocalLLM.BaseURL == "" {
 					return fmt.Errorf("local_llm.base_url is required when local_llm is in translator.providers")
 				}
 			}
 		}
+		c.Translator.Providers = trimmed
 		return c.validateGlossary()
 	}
 
@@ -653,6 +692,14 @@ func (c *Config) SafeLogValues() map[string]any {
 		"openrouter.evaluator.gemini_api_key":   util.MaskSecret(c.OpenRouter.Evaluator.GeminiAPIKey),
 		"openrouter.evaluator.model":            c.OpenRouter.Evaluator.Model,
 		"openrouter.evaluator.schedule_hour":    c.OpenRouter.Evaluator.ScheduleHour,
+		"openai.api_key":                        util.MaskSecret(c.OpenAI.APIKey),
+		"openai.model":                          c.OpenAI.Model,
+		"openai.api_base":                       c.OpenAI.APIBase,
+		"openai.use_httpx":                      c.OpenAI.UseHTTPX,
+		"openai.instruction":                    c.OpenAI.Instruction,
+		"openai.rate_limit":                     c.OpenAI.RateLimit,
+		"openai.max_batch_size":                 c.OpenAI.MaxBatchSize,
+		"openai.timeout":                        c.OpenAI.Timeout.String(),
 		"translator.providers":                  c.Translator.Providers,
 		"translator.target_lang":                c.Translator.TargetLanguage,
 		"translator.suffix":                     c.Translator.OutputSuffix,

@@ -18,6 +18,7 @@ import (
 	"github.com/fusionn-subs/internal/service/translator"
 	"github.com/fusionn-subs/internal/service/worker"
 	sqlitestore "github.com/fusionn-subs/internal/storage/sqlite"
+	"github.com/fusionn-subs/internal/types"
 	"github.com/fusionn-subs/internal/version"
 	"github.com/fusionn-subs/pkg/logger"
 )
@@ -151,7 +152,7 @@ func initGlossary(ctx context.Context, cfg *config.Config) (worker.GlossaryPrepa
 	}
 
 	logger.Infof("📚 Glossary enabled: %s", cfg.Glossary.DBPath)
-	return glossary.NewService(glossary.ServiceConfig{
+	svc := glossary.NewService(glossary.ServiceConfig{
 		Enabled:                   cfg.Glossary.Enabled,
 		TargetLanguage:            cfg.Glossary.TargetLanguage,
 		MinConfidence:             cfg.Glossary.MinConfidence,
@@ -166,7 +167,30 @@ func initGlossary(ctx context.Context, cfg *config.Config) (worker.GlossaryPrepa
 		PromoteMinConfidence:      cfg.Glossary.PromoteMinConfidence,
 		PromoteMinMediaCount:      cfg.Glossary.PromoteMinMediaCount,
 		LLMTimeout:                cfg.Glossary.LLM.Timeout,
-	}, sqlitestore.NewGlossaryStore(db), glossaryLLM), cleanup, nil
+	}, sqlitestore.NewGlossaryStore(db), glossaryLLM)
+	return glossaryWorkerPreparer{svc: svc}, cleanup, nil
+}
+
+type glossaryWorkerPreparer struct {
+	svc *glossary.Service
+}
+
+func (p glossaryWorkerPreparer) Prepare(ctx context.Context, msg types.JobMessage) (worker.GlossaryPayload, error) {
+	payload, err := p.svc.Prepare(ctx, msg)
+	if err != nil {
+		return worker.GlossaryPayload{}, err
+	}
+	terminology := make([]translator.Terminology, 0, len(payload.Terminology))
+	for _, term := range payload.Terminology {
+		terminology = append(terminology, translator.Terminology{
+			Source: term.Source,
+			Target: term.Target,
+		})
+	}
+	return worker.GlossaryPayload{
+		Terminology:         terminology,
+		BuildTerminologyMap: payload.BuildTerminologyMap,
+	}, nil
 }
 
 func newGlossaryLLM(ctx context.Context, cfg *config.Config) (glossary.LLMClient, error) {

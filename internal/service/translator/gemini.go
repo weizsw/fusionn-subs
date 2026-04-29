@@ -84,32 +84,7 @@ func (t *GeminiTranslator) Translate(ctx context.Context, req Request) (string, 
 	ctxTimeout, cancel := context.WithTimeout(ctx, config.DefaultGeminiTimeout)
 	defer cancel()
 
-	args := []string{
-		msg.SubtitlePath,
-		"-o", outputPath,
-		"-l", t.targetLanguage,
-		"-k", t.apiKey,
-	}
-
-	if model.Name != "" {
-		args = append(args, "-m", model.Name)
-	}
-
-	if mediaTitle := strings.TrimSpace(msg.MediaTitle); mediaTitle != "" {
-		args = append(args, "--moviename", mediaTitle)
-	}
-
-	if instruction := combineInstructions(t.instruction, req.ExtraInstruction); instruction != "" {
-		args = append(args, "--instruction", instruction)
-	}
-
-	if model.RateLimit > 0 {
-		args = append(args, "--ratelimit", strconv.Itoa(model.RateLimit))
-	}
-
-	if model.MaxBatchSize > 0 {
-		args = append(args, "--maxbatchsize", strconv.Itoa(model.MaxBatchSize))
-	}
+	args := t.buildArgs(req, outputPath, model)
 
 	cmd := exec.CommandContext(ctxTimeout, t.scriptPath, args...)
 	if t.workDir != "" {
@@ -137,6 +112,38 @@ func (t *GeminiTranslator) Translate(ctx context.Context, req Request) (string, 
 	}
 
 	return resultPath, nil
+}
+
+func (t *GeminiTranslator) buildArgs(req Request, outputPath string, model config.GeminiModelConfig) []string {
+	msg := req.Job
+	args := []string{
+		msg.SubtitlePath,
+		"-o", outputPath,
+		"-l", t.targetLanguage,
+		"-k", t.apiKey,
+	}
+
+	if model.Name != "" {
+		args = append(args, "-m", model.Name)
+	}
+
+	if mediaTitle := strings.TrimSpace(msg.MediaTitle); mediaTitle != "" {
+		args = append(args, "--moviename", mediaTitle)
+	}
+
+	if instruction := combineInstructions(t.instruction, req.ExtraInstruction); instruction != "" {
+		args = append(args, "--instruction", instruction)
+	}
+
+	if model.RateLimit > 0 {
+		args = append(args, "--ratelimit", strconv.Itoa(model.RateLimit))
+	}
+
+	if model.MaxBatchSize > 0 {
+		args = append(args, "--maxbatchsize", strconv.Itoa(model.MaxBatchSize))
+	}
+
+	return appendTerminologyArgs(args, req)
 }
 
 func (t *GeminiTranslator) switchToSecondary() {
