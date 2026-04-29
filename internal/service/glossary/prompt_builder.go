@@ -61,6 +61,9 @@ func isPromptEligible(entry PromptEntry, opts PromptOptions) bool {
 	if entry.TranslationMode == TranslationModeContextual && entry.Source != SourceCurated {
 		return false
 	}
+	if isOneOffGeneratedTransliteratedCharacter(entry) {
+		return false
+	}
 	if entry.Confidence < opts.InjectMinConfidence && entry.Source != SourceCurated {
 		return false
 	}
@@ -68,6 +71,13 @@ func isPromptEligible(entry PromptEntry, opts PromptOptions) bool {
 		return false
 	}
 	return entry.Scope == ScopeMedia || entry.Scope == ScopeCommon
+}
+
+func isOneOffGeneratedTransliteratedCharacter(entry PromptEntry) bool {
+	return entry.Source == SourceGenerated &&
+		entry.Category == CategoryCharacter &&
+		entry.TranslationMode == TranslationModeTransliterate &&
+		entry.EvidenceCount <= 1
 }
 
 func promptDisplayTerm(entry PromptEntry) string {

@@ -121,3 +121,71 @@ func TestBuildTerminologyAllowsCuratedContextualEntries(t *testing.T) {
 		t.Fatalf("terminology = %#v, want %#v", got, want)
 	}
 }
+
+func TestBuildTerminologySkipsOneOffGeneratedTransliteratedCharacters(t *testing.T) {
+	got := BuildTerminology([]PromptEntry{
+		{
+			Scope:           ScopeMedia,
+			MediaKey:        "m",
+			NormalizedTerm:  "russell",
+			DisplayTerm:     "Russell",
+			TargetText:      "拉塞尔",
+			TranslationMode: TranslationModeTransliterate,
+			Category:        CategoryCharacter,
+			Confidence:      0.96,
+			EvidenceCount:   1,
+			Status:          StatusActive,
+			Source:          SourceGenerated,
+		},
+	}, PromptOptions{MediaKey: "m", InjectMinConfidence: 0.80, MaxPromptEntries: 10})
+
+	if !reflect.DeepEqual(got, []Terminology(nil)) {
+		t.Fatalf("terminology = %#v, want nil", got)
+	}
+}
+
+func TestBuildTerminologyAllowsRepeatedGeneratedTransliteratedCharacters(t *testing.T) {
+	got := BuildTerminology([]PromptEntry{
+		{
+			Scope:           ScopeMedia,
+			MediaKey:        "m",
+			NormalizedTerm:  "carey",
+			DisplayTerm:     "Carey",
+			TargetText:      "凯莉",
+			TranslationMode: TranslationModeTransliterate,
+			Category:        CategoryCharacter,
+			Confidence:      0.92,
+			EvidenceCount:   2,
+			Status:          StatusActive,
+			Source:          SourceGenerated,
+		},
+	}, PromptOptions{MediaKey: "m", InjectMinConfidence: 0.80, MaxPromptEntries: 10})
+	want := []Terminology{{Source: "Carey", Target: "凯莉"}}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("terminology = %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildTerminologyAllowsOneOffGeneratedNonTransliteratedCharacterTerms(t *testing.T) {
+	got := BuildTerminology([]PromptEntry{
+		{
+			Scope:           ScopeMedia,
+			MediaKey:        "m",
+			NormalizedTerm:  "st. peter",
+			DisplayTerm:     "St. Peter",
+			TargetText:      "圣彼得",
+			TranslationMode: TranslationModeTranslate,
+			Category:        CategoryCharacter,
+			Confidence:      0.95,
+			EvidenceCount:   1,
+			Status:          StatusActive,
+			Source:          SourceGenerated,
+		},
+	}, PromptOptions{MediaKey: "m", InjectMinConfidence: 0.80, MaxPromptEntries: 10})
+	want := []Terminology{{Source: "St. Peter", Target: "圣彼得"}}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("terminology = %#v, want %#v", got, want)
+	}
+}
