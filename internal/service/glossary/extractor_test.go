@@ -217,6 +217,36 @@ CAREY: We need help.
 	}
 }
 
+func TestExtractCandidatesFiltersNumberedSpeakerLabels(t *testing.T) {
+	found := extractCandidateMap(t, "episode.srt", `1
+00:00:01,000 --> 00:00:03,000
+MAN 1: SO15 arrived.
+
+2
+00:00:04,000 --> 00:00:06,000
+MAN 1: We need DCI Carey.
+
+3
+00:00:07,000 --> 00:00:09,000
+WOMAN 2: SO15 called again.
+
+4
+00:00:10,000 --> 00:00:12,000
+WOMAN 2: DCI Carey answered.
+`, ExtractOptions{})
+
+	for _, term := range []string{"man", "woman"} {
+		if _, ok := found[term]; ok {
+			t.Fatalf("did not expect %q speaker label candidate, got %#v", term, found)
+		}
+	}
+	for _, term := range []string{"so15", "dci carey"} {
+		if _, ok := found[term]; !ok {
+			t.Fatalf("expected %q dialogue candidate, got %#v", term, found)
+		}
+	}
+}
+
 func TestExtractCandidatesKeepsNonSpeakerColonContent(t *testing.T) {
 	found := extractCandidateMap(t, "episode.srt", `1
 00:00:01,000 --> 00:00:03,000
