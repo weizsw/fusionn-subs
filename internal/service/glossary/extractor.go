@@ -25,14 +25,14 @@ var (
 	candidatePatterns = []candidatePatternSpec{
 		{regexp.MustCompile(`\b(?:[A-Z]\.){2,}(?:[A-Z]\.)?`), candidatePriorityAcronym},
 		{regexp.MustCompile(`\b(?:[A-Z]{2,}\d*|[A-Z]+\d+|\d*[A-Z]{2,})\b`), candidatePriorityAcronym},
-		{regexp.MustCompile(`\b(?:[a-z]+[A-Z][A-Za-z]*|[A-Z][\p{Ll}\p{M}]{3,}s)(?:['’]s)?\b`), candidatePriorityBrand},
+		{regexp.MustCompile(`(?:[a-z]+[A-Z][A-Za-z]*|\p{Lu}[\p{Ll}\p{M}]{3,}s)(?:['’]s)?`), candidatePriorityBrand},
 		{regexp.MustCompile(`\b[A-Za-z]+&[A-Za-z]+(?:&[A-Za-z]+)*\b`), candidatePrioritySpecial},
-		{regexp.MustCompile(`\b(?:[A-Z][\p{Ll}\p{M}]+|[A-Z]+)(?:-(?:[A-Z][\p{Ll}\p{M}]+|[A-Z]+|\d+))+\b`), candidatePrioritySpecial},
-		{regexp.MustCompile(`\b[A-Z][\p{L}\p{M}]*['’][A-Z][\p{Ll}\p{M}]+(?:['’]s)?\b`), candidatePrioritySpecial},
-		{regexp.MustCompile(`\b(?:Dr\.|DCI)\s+[A-Z][\p{Ll}\p{M}]+(?:['’]s)?\b`), candidatePriorityTitle},
-		{regexp.MustCompile(`\b[A-Z][\p{Ll}\p{M}]+(?:\s+(?:of|the|for|de|del|la|le|van|von|du)\s+[A-Z][\p{Ll}\p{M}]+)+\b`), candidatePriorityPhrase},
-		{regexp.MustCompile(`\b[A-Z][\p{Ll}\p{M}]+(?:\s+(?:[A-Z][\p{Ll}\p{M}]+|\d+)){1,3}\b`), candidatePriorityPhrase},
-		{regexp.MustCompile(`\b(?:[a-z]+[A-Z][A-Za-z]*|[A-Z][\p{Ll}\p{M}]+)(?:['’]s)?\b`), candidatePrioritySingleProper},
+		{regexp.MustCompile(`(?:\p{Lu}[\p{Ll}\p{M}]+|\p{Lu}+)(?:-(?:\p{Lu}[\p{Ll}\p{M}]+|\p{Lu}+|\d+))+`), candidatePrioritySpecial},
+		{regexp.MustCompile(`\p{Lu}[\p{L}\p{M}]*['’]\p{Lu}[\p{Ll}\p{M}]+(?:['’]s)?`), candidatePrioritySpecial},
+		{regexp.MustCompile(`(?:Dr\.|DCI)\s+\p{Lu}[\p{Ll}\p{M}]+(?:['’]s)?`), candidatePriorityTitle},
+		{regexp.MustCompile(`\p{Lu}[\p{Ll}\p{M}]+(?:\s+(?:of|the|for|de|del|la|le|van|von|du)\s+\p{Lu}[\p{Ll}\p{M}]+)+`), candidatePriorityPhrase},
+		{regexp.MustCompile(`\p{Lu}[\p{Ll}\p{M}]+(?:\s+(?:\p{Lu}[\p{Ll}\p{M}]+|\d+)){1,3}`), candidatePriorityPhrase},
+		{regexp.MustCompile(`(?:[a-z]+[A-Z][A-Za-z]*|\p{Lu}[\p{Ll}\p{M}]+)(?:['’]s)?`), candidatePrioritySingleProper},
 	}
 	spacePattern      = regexp.MustCompile(`\s+`)
 	possessivePattern = regexp.MustCompile(`(?i)(?:'s|’s)\b`)
@@ -255,6 +255,9 @@ func collectCandidateMatches(line string) []candidateMatch {
 	var matches []candidateMatch
 	for _, spec := range candidatePatterns {
 		for _, loc := range spec.re.FindAllStringIndex(line, -1) {
+			if !hasCandidateBoundary(line, loc[0], loc[1]) {
+				continue
+			}
 			term := strings.TrimSpace(line[loc[0]:loc[1]])
 			if term == "" || isMalformedPhrase(term) || hasDanglingConnector(term) {
 				continue
@@ -298,6 +301,26 @@ func collectCandidateMatches(line string) []candidateMatch {
 		out = append(out, match)
 	}
 	return out
+}
+
+func hasCandidateBoundary(line string, start, end int) bool {
+	if start > 0 {
+		r, _ := utf8.DecodeLastRuneInString(line[:start])
+		if isCandidateWordRune(r) {
+			return false
+		}
+	}
+	if end < len(line) {
+		r, _ := utf8.DecodeRuneInString(line[end:])
+		if isCandidateWordRune(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func isCandidateWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.Is(unicode.Mark, r) || r == '_'
 }
 
 func coveredByKeptMatch(match candidateMatch, kept []candidateMatch) bool {
