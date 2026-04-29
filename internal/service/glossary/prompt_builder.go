@@ -58,6 +58,9 @@ func isPromptEligible(entry PromptEntry, opts PromptOptions) bool {
 	if strings.TrimSpace(entry.NormalizedTerm) == "" || strings.TrimSpace(entry.TargetText) == "" {
 		return false
 	}
+	if entry.TranslationMode == TranslationModeContextual && entry.Source != SourceCurated {
+		return false
+	}
 	if entry.Confidence < opts.InjectMinConfidence && entry.Source != SourceCurated {
 		return false
 	}
