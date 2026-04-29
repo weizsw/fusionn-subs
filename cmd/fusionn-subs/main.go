@@ -14,8 +14,10 @@ import (
 
 	"github.com/fusionn-subs/internal/client/callback"
 	"github.com/fusionn-subs/internal/config"
+	"github.com/fusionn-subs/internal/service/glossary"
 	"github.com/fusionn-subs/internal/service/translator"
 	"github.com/fusionn-subs/internal/service/worker"
+	sqlitestore "github.com/fusionn-subs/internal/storage/sqlite"
 	"github.com/fusionn-subs/internal/version"
 	"github.com/fusionn-subs/pkg/logger"
 )
@@ -71,6 +73,12 @@ func run() error {
 		return fmt.Errorf("translator error: %w", err)
 	}
 
+	glossarySvc, cleanupGlossary, err := initGlossary(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer cleanupGlossary()
+
 	// Set default retry config if not provided
 	if cfg.Callback.MaxRetries == 0 {
 		cfg.Callback.MaxRetries = 5
@@ -105,7 +113,7 @@ func run() error {
 		Queue:                 cfg.Redis.Queue,
 		PollTimeout:           config.DefaultWorkerPollTimeout,
 		MaxTranslationRetries: cfg.Translator.MaxTranslationRetries,
-	}, translatorSvc, callbackClient)
+	}, translatorSvc, glossarySvc, callbackClient)
 
 	logger.Info("")
 	logger.Info("────────────────────────────────────────────")
@@ -119,6 +127,71 @@ func run() error {
 	logger.Info("👋 Goodbye!")
 
 	return err
+}
+
+func initGlossary(ctx context.Context, cfg *config.Config) (worker.GlossaryPreparer, func(), error) {
+	if !cfg.Glossary.Enabled {
+		return nil, func() {}, nil
+	}
+
+	db, err := sqlitestore.Open(ctx, cfg.Glossary.DBPath)
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("glossary sqlite error: %w", err)
+	}
+	cleanup := func() {
+		if closeErr := db.Close(); closeErr != nil {
+			logger.Errorf("Glossary DB close error: %v", closeErr)
+		}
+	}
+
+	glossaryLLM, err := newGlossaryLLM(ctx, cfg)
+	if err != nil {
+		cleanup()
+		return nil, func() {}, err
+	}
+
+	logger.Infof("📚 Glossary enabled: %s", cfg.Glossary.DBPath)
+	return glossary.NewService(glossary.ServiceConfig{
+		Enabled:                   cfg.Glossary.Enabled,
+		TargetLanguage:            cfg.Glossary.TargetLanguage,
+		MinConfidence:             cfg.Glossary.MinConfidence,
+		InjectMinConfidence:       cfg.Glossary.InjectMinConfidence,
+		MaxPromptEntries:          cfg.Glossary.MaxPromptEntries,
+		MaxCandidates:             cfg.Glossary.MaxCandidates,
+		MaxSnippetsPerCandidate:   cfg.Glossary.MaxSnippetsPerCandidate,
+		MaxSubtitleBytes:          cfg.Glossary.MaxSubtitleBytes,
+		MaxCues:                   cfg.Glossary.MaxCues,
+		MaxActiveVariantsPerTerm:  cfg.Glossary.MaxActiveVariantsPerTerm,
+		MaxObservationsPerVariant: cfg.Glossary.MaxObservationsPerVariant,
+		PromoteMinConfidence:      cfg.Glossary.PromoteMinConfidence,
+		PromoteMinMediaCount:      cfg.Glossary.PromoteMinMediaCount,
+		LLMTimeout:                cfg.Glossary.LLM.Timeout,
+	}, sqlitestore.NewGlossaryStore(db), glossaryLLM), cleanup, nil
+}
+
+func newGlossaryLLM(ctx context.Context, cfg *config.Config) (glossary.LLMClient, error) {
+	switch cfg.Glossary.LLM.Provider {
+	case config.ProviderOpenAICompatible:
+		return glossary.NewOpenAICompatibleClient(glossary.OpenAICompatibleConfig{
+			BaseURL:     cfg.Glossary.LLM.BaseURL,
+			Endpoint:    cfg.Glossary.LLM.Endpoint,
+			APIKey:      cfg.Glossary.LLM.APIKey,
+			Model:       cfg.Glossary.LLM.Model,
+			Temperature: cfg.Glossary.LLM.Temperature,
+		}), nil
+	case config.ProviderGemini:
+		apiKey := cfg.Glossary.LLM.APIKey
+		if apiKey == "" {
+			apiKey = cfg.Gemini.APIKey
+		}
+		client, err := glossary.NewGeminiClient(ctx, apiKey, cfg.Glossary.LLM.Model)
+		if err != nil {
+			return nil, fmt.Errorf("glossary gemini client error: %w", err)
+		}
+		return client, nil
+	default:
+		return nil, fmt.Errorf("unsupported glossary llm provider: %s", cfg.Glossary.LLM.Provider)
+	}
 }
 
 func initRedis(url string) (*redis.Client, error) {

@@ -100,3 +100,29 @@ translator:
   output_suffix: "chs" # Suffix for translated file (e.g., movie.chs.srt)
   max_translation_retries: 3 # Maximum retry attempts for translation (default: 3)
 
+# ─────────────────────────────────────────────────────────────────────────────
+# GLOSSARY - Automatic terminology extraction before translation
+# ─────────────────────────────────────────────────────────────────────────────
+glossary:
+  enabled: false
+  db_path: "/app/data/glossary.db"
+  target_language: "zh-Hans"
+  min_confidence: 0.75
+  inject_min_confidence: 0.80
+  max_prompt_entries: 30
+  max_candidates: 80
+  max_snippets_per_candidate: 3
+  max_subtitle_bytes: 1048576
+  max_cues: 3000
+  max_active_variants_per_term: 3
+  max_observations_per_variant: 10
+  promote_min_confidence: 0.85
+  promote_min_media_count: 3
+  llm:
+    provider: "openai_compatible"
+    base_url: "http://127.0.0.1:8045"
+    endpoint: "/v1/chat/completions"
+    api_key: ""
+    model: "qwen3:8b"
+    timeout: 60s
+    temperature: 0.1

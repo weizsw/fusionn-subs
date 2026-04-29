@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/fusionn-subs/internal/config"
-	"github.com/fusionn-subs/internal/types"
 	"github.com/fusionn-subs/pkg/logger"
 )
 
@@ -45,7 +44,7 @@ func NewLocalLLMTranslator(cfg config.LocalLLMConfig, targetLang, outputSuffix s
 
 	endpoint := cfg.Endpoint
 	if endpoint == "" {
-		endpoint = "/v1/chat/completions"
+		endpoint = config.DefaultOpenAIChatCompletionsEndpoint
 	}
 
 	rateLimit := cfg.RateLimit
@@ -75,7 +74,8 @@ func NewLocalLLMTranslator(cfg config.LocalLLMConfig, targetLang, outputSuffix s
 }
 
 // Translate translates subtitles using a local/custom OpenAI-compatible endpoint
-func (t *LocalLLMTranslator) Translate(ctx context.Context, msg types.JobMessage) (string, error) {
+func (t *LocalLLMTranslator) Translate(ctx context.Context, req Request) (string, error) {
+	msg := req.Job
 	if err := msg.Validate(); err != nil {
 		return "", fmt.Errorf("invalid message: %w", err)
 	}
@@ -121,7 +121,7 @@ func (t *LocalLLMTranslator) Translate(ctx context.Context, msg types.JobMessage
 		args = append(args, "--moviename", mediaTitle)
 	}
 
-	if instruction != "" {
+	if instruction := combineInstructions(instruction, req.ExtraInstruction); instruction != "" {
 		args = append(args, "--instruction", instruction)
 	}
 
@@ -162,7 +162,7 @@ func (t *LocalLLMTranslator) UpdateFromConfig(cfg *config.Config) {
 	t.model = cfg.LocalLLM.Model
 	t.endpoint = cfg.LocalLLM.Endpoint
 	if t.endpoint == "" {
-		t.endpoint = "/v1/chat/completions"
+		t.endpoint = config.DefaultOpenAIChatCompletionsEndpoint
 	}
 	t.instruction = cfg.LocalLLM.Instruction
 	t.rateLimit = cfg.LocalLLM.RateLimit

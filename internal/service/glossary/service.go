@@ -1,0 +1,167 @@
+package glossary
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/fusionn-subs/internal/types"
+	"github.com/fusionn-subs/pkg/logger"
+)
+
+type ServiceConfig struct {
+	Enabled                   bool
+	TargetLanguage            string
+	MinConfidence             float64
+	InjectMinConfidence       float64
+	MaxPromptEntries          int
+	MaxCandidates             int
+	MaxSnippetsPerCandidate   int
+	MaxSubtitleBytes          int64
+	MaxCues                   int
+	MaxActiveVariantsPerTerm  int
+	MaxObservationsPerVariant int
+	PromoteMinConfidence      float64
+	PromoteMinMediaCount      int
+	LLMTimeout                time.Duration
+}
+
+type Service struct {
+	cfg   ServiceConfig
+	store Store
+	llm   LLMClient
+}
+
+func NewService(cfg ServiceConfig, store Store, llm LLMClient) *Service {
+	return &Service{cfg: cfg, store: store, llm: llm}
+}
+
+func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (string, error) {
+	if s == nil || !s.cfg.Enabled {
+		return "", nil
+	}
+	if s.store == nil {
+		return "", fmt.Errorf("glossary store is required")
+	}
+
+	mediaKey := ResolveMediaKey(msg)
+	entries, err := s.store.LoadPromptEntries(ctx, mediaKey.Value, s.cfg.TargetLanguage)
+	if err != nil {
+		return "", s.recordFailed(ctx, msg, mediaKey.Value, fmt.Errorf("load glossary entries: %w", err))
+	}
+
+	promptFromEntries := func() string {
+		return BuildPrompt(entries, PromptOptions{
+			MediaKey:            mediaKey.Value,
+			InjectMinConfidence: s.cfg.InjectMinConfidence,
+			MaxPromptEntries:    s.cfg.MaxPromptEntries,
+		})
+	}
+
+	candidates, extractErr := ExtractCandidates(msg.SubtitlePath, ExtractOptions{
+		MaxSubtitleBytes:        s.cfg.MaxSubtitleBytes,
+		MaxCues:                 s.cfg.MaxCues,
+		MaxCandidates:           s.cfg.MaxCandidates,
+		MaxSnippetsPerCandidate: s.cfg.MaxSnippetsPerCandidate,
+	})
+	if extractErr != nil {
+		logger.Warnf("glossary extraction skipped: %v", extractErr)
+		if err := s.recordCompleted(ctx, msg, mediaKey.Value); err != nil {
+			return "", err
+		}
+		return promptFromEntries(), nil
+	}
+
+	if s.llm == nil {
+		logger.Warn("glossary LLM generation skipped: no client configured")
+		if err := s.recordCompleted(ctx, msg, mediaKey.Value); err != nil {
+			return "", err
+		}
+		return promptFromEntries(), nil
+	}
+
+	llmCtx := ctx
+	cancel := func() {}
+	if s.cfg.LLMTimeout > 0 {
+		llmCtx, cancel = context.WithTimeout(ctx, s.cfg.LLMTimeout)
+	}
+	defer cancel()
+
+	resp, err := s.llm.GenerateGlossary(llmCtx, GenerateRequest{
+		Job:             msg,
+		MediaKey:        mediaKey.Value,
+		TargetLanguage:  s.cfg.TargetLanguage,
+		ExistingEntries: entries,
+		Candidates:      candidates,
+	})
+	if err != nil {
+		logger.Warnf("glossary LLM generation skipped: %v", err)
+		if err := s.recordCompleted(ctx, msg, mediaKey.Value); err != nil {
+			return "", err
+		}
+		return promptFromEntries(), nil
+	}
+
+	result, err := s.store.UpsertGeneratedEntries(ctx, UpsertRequest{
+		Job:            msg,
+		MediaKey:       mediaKey.Value,
+		TargetLanguage: s.cfg.TargetLanguage,
+		Entries:        resp.Entries,
+		Options: UpsertOptions{
+			MinConfidence:             s.cfg.MinConfidence,
+			MaxActiveVariantsPerTerm:  s.cfg.MaxActiveVariantsPerTerm,
+			MaxObservationsPerVariant: s.cfg.MaxObservationsPerVariant,
+		},
+	})
+	if err != nil {
+		return "", s.recordFailed(ctx, msg, mediaKey.Value, fmt.Errorf("store glossary entries: %w", err))
+	}
+	logger.Infof("Glossary entries: created=%d merged=%d candidates=%d suppressed=%d", result.Created, result.Merged, result.Candidates, result.Suppressed)
+
+	if _, err := s.store.PromoteCommonEntries(ctx, PromotionOptions{
+		TargetLanguage:        s.cfg.TargetLanguage,
+		MinConfidence:         s.cfg.PromoteMinConfidence,
+		MinDistinctMediaCount: s.cfg.PromoteMinMediaCount,
+	}); err != nil {
+		return "", s.recordFailed(ctx, msg, mediaKey.Value, fmt.Errorf("promote glossary entries: %w", err))
+	}
+
+	entries, err = s.store.LoadPromptEntries(ctx, mediaKey.Value, s.cfg.TargetLanguage)
+	if err != nil {
+		return "", s.recordFailed(ctx, msg, mediaKey.Value, fmt.Errorf("reload glossary entries: %w", err))
+	}
+	if err := s.recordCompleted(ctx, msg, mediaKey.Value); err != nil {
+		return "", err
+	}
+	return BuildPrompt(entries, PromptOptions{
+		MediaKey:            mediaKey.Value,
+		InjectMinConfidence: s.cfg.InjectMinConfidence,
+		MaxPromptEntries:    s.cfg.MaxPromptEntries,
+	}), nil
+}
+
+func (s *Service) recordCompleted(ctx context.Context, msg types.JobMessage, mediaKey string) error {
+	if err := s.store.RecordJob(ctx, JobRecord{
+		JobID:            msg.JobID,
+		MediaKey:         mediaKey,
+		SubtitlePathHash: SubtitlePathHash(msg.SubtitlePath),
+		Status:           JobStatusCompleted,
+	}); err != nil {
+		return fmt.Errorf("record glossary job: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) recordFailed(ctx context.Context, msg types.JobMessage, mediaKey string, cause error) error {
+	recordErr := s.store.RecordJob(ctx, JobRecord{
+		JobID:            msg.JobID,
+		MediaKey:         mediaKey,
+		SubtitlePathHash: SubtitlePathHash(msg.SubtitlePath),
+		Status:           JobStatusFailed,
+		Error:            cause.Error(),
+	})
+	if recordErr != nil {
+		return fmt.Errorf("%w; record glossary job: %v", cause, recordErr)
+	}
+	return cause
+}
