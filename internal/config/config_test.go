@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -164,6 +165,114 @@ func TestGlossaryGeminiUsesGeminiAPIKeyFallback(t *testing.T) {
 	}
 }
 
+func TestOpenAIProviderValidatesConfig(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	cfg := validConfigForTest()
+	cfg.Gemini.APIKey = ""
+	cfg.Translator.Providers = []string{"openai"}
+	cfg.OpenAI = OpenAIConfig{
+		APIKey:       "openai-key",
+		Model:        "gpt-5-mini",
+		RateLimit:    10,
+		MaxBatchSize: 20,
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if cfg.OpenAI.Timeout != DefaultOpenAITimeout {
+		t.Fatalf("timeout = %v, want %v", cfg.OpenAI.Timeout, DefaultOpenAITimeout)
+	}
+}
+
+func TestOpenAIProviderUsesEnvironmentAPIKeyFallback(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "env-openai-key")
+	cfg := validConfigForTest()
+	cfg.Gemini.APIKey = ""
+	cfg.Translator.Providers = []string{"openai"}
+	cfg.OpenAI.Model = "gpt-5-mini"
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if cfg.OpenAI.Timeout != DefaultOpenAITimeout {
+		t.Fatalf("timeout = %v, want %v", cfg.OpenAI.Timeout, DefaultOpenAITimeout)
+	}
+}
+
+func TestValidateNormalizesTranslatorProviders(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	cfg := validConfigForTest()
+	cfg.Gemini.APIKey = ""
+	cfg.Translator.Providers = []string{" openai "}
+	cfg.OpenAI.APIKey = "openai-key"
+	cfg.OpenAI.Model = "gpt-5-mini"
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	want := []string{"openai"}
+	if !reflect.DeepEqual(cfg.Translator.Providers, want) {
+		t.Fatalf("providers = %#v, want %#v", cfg.Translator.Providers, want)
+	}
+}
+
+func TestOpenAIProviderRequiresAPIKey(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	cfg := validConfigForTest()
+	cfg.Gemini.APIKey = ""
+	cfg.Translator.Providers = []string{"openai"}
+	cfg.OpenAI.Model = "gpt-5-mini"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "openai.api_key or OPENAI_API_KEY is required") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestOpenAIProviderRequiresModel(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	cfg := validConfigForTest()
+	cfg.Gemini.APIKey = ""
+	cfg.Translator.Providers = []string{"openai"}
+	cfg.OpenAI.APIKey = "openai-key"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "openai.model is required") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestOpenAIProviderRejectsHTTPXWithoutAPIBase(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	cfg := validConfigForTest()
+	cfg.Gemini.APIKey = ""
+	cfg.Translator.Providers = []string{"openai"}
+	cfg.OpenAI.APIKey = "openai-key"
+	cfg.OpenAI.Model = "gpt-5-mini"
+	cfg.OpenAI.UseHTTPX = true
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "openai.use_httpx requires openai.api_base") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestOpenAIProviderRejectsNegativeTimeout(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	cfg := validConfigForTest()
+	cfg.Gemini.APIKey = ""
+	cfg.Translator.Providers = []string{"openai"}
+	cfg.OpenAI.APIKey = "openai-key"
+	cfg.OpenAI.Model = "gpt-5-mini"
+	cfg.OpenAI.Timeout = -time.Second
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "openai.timeout must be positive") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestGlossaryRejectsWhitespaceIdentityFields(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -302,6 +411,47 @@ func TestSafeLogValuesIncludesAllGlossaryValues(t *testing.T) {
 		text, ok := value.(string)
 		if ok && strings.Contains(text, cfg.Glossary.LLM.APIKey) {
 			t.Fatalf("%s contains raw glossary API key", key)
+		}
+	}
+}
+
+func TestSafeLogValuesIncludesOpenAIValues(t *testing.T) {
+	cfg := validConfigForTest()
+	cfg.OpenAI = OpenAIConfig{
+		APIKey:       "openai-secret",
+		Model:        "gpt-5-mini",
+		APIBase:      "https://example.openai.local/v1",
+		UseHTTPX:     true,
+		Instruction:  "Keep tone natural.",
+		RateLimit:    12,
+		MaxBatchSize: 18,
+		Timeout:      45 * time.Minute,
+	}
+
+	values := cfg.SafeLogValues()
+	want := map[string]any{
+		"openai.api_key":        util.MaskSecret(cfg.OpenAI.APIKey),
+		"openai.model":          cfg.OpenAI.Model,
+		"openai.api_base":       cfg.OpenAI.APIBase,
+		"openai.use_httpx":      cfg.OpenAI.UseHTTPX,
+		"openai.instruction":    cfg.OpenAI.Instruction,
+		"openai.rate_limit":     cfg.OpenAI.RateLimit,
+		"openai.max_batch_size": cfg.OpenAI.MaxBatchSize,
+		"openai.timeout":        cfg.OpenAI.Timeout.String(),
+	}
+
+	for key, wantValue := range want {
+		if got := values[key]; got != wantValue {
+			t.Fatalf("%s = %#v, want %#v", key, got, wantValue)
+		}
+	}
+	if values["openai.api_key"] == cfg.OpenAI.APIKey {
+		t.Fatalf("openai.api_key was not masked")
+	}
+	for key, value := range values {
+		text, ok := value.(string)
+		if ok && strings.Contains(text, cfg.OpenAI.APIKey) {
+			t.Fatalf("%s contains raw OpenAI API key", key)
 		}
 	}
 }

@@ -72,6 +72,16 @@ type PromptOptions struct {
 	MaxPromptEntries    int
 }
 
+type Terminology struct {
+	Source string
+	Target string
+}
+
+type Payload struct {
+	Terminology         []Terminology
+	BuildTerminologyMap bool
+}
+
 type Candidate struct {
 	Term           string
 	NormalizedTerm string

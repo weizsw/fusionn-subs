@@ -22,6 +22,11 @@ const (
 	dimEnd   = "\033[0m"
 )
 
+type Terminology struct {
+	Source string
+	Target string
+}
+
 func combineInstructions(base, extra string) string {
 	base = strings.TrimSpace(base)
 	extra = strings.TrimSpace(extra)
@@ -34,6 +39,21 @@ func combineInstructions(base, extra string) string {
 	default:
 		return base + "\n\n" + extra
 	}
+}
+
+func appendTerminologyArgs(args []string, req Request) []string {
+	for _, term := range req.Terminology {
+		source := strings.TrimSpace(term.Source)
+		target := strings.TrimSpace(term.Target)
+		if source == "" || target == "" {
+			continue
+		}
+		args = append(args, "--terminology", source+"::"+target)
+	}
+	if req.BuildTerminologyMap {
+		args = append(args, "--build-terminology-map")
+	}
+	return args
 }
 
 // executeScript executes a script command and handles stdout/stderr streaming
@@ -121,12 +141,20 @@ func shellQuote(arg string) string {
 	return strconv.Quote(arg)
 }
 
-var apiKeyPattern = regexp.MustCompile(`(-k\s+)(\S+)`)
+var separatedAPIKeyPattern = regexp.MustCompile(`((?:-k|--apikey)\s+)(\S+)`)
+var equalsAPIKeyPattern = regexp.MustCompile(`(--apikey=)(\S+)`)
 
-// maskAPIKeyInCommand replaces -k value with masked version for logging
+// maskAPIKeyInCommand replaces API key flag values with masked versions for logging.
 func maskAPIKeyInCommand(cmd string) string {
-	return apiKeyPattern.ReplaceAllStringFunc(cmd, func(match string) string {
-		parts := apiKeyPattern.FindStringSubmatch(match)
+	cmd = separatedAPIKeyPattern.ReplaceAllStringFunc(cmd, func(match string) string {
+		parts := separatedAPIKeyPattern.FindStringSubmatch(match)
+		if len(parts) == 3 {
+			return parts[1] + util.MaskSecret(parts[2])
+		}
+		return match
+	})
+	return equalsAPIKeyPattern.ReplaceAllStringFunc(cmd, func(match string) string {
+		parts := equalsAPIKeyPattern.FindStringSubmatch(match)
 		if len(parts) == 3 {
 			return parts[1] + util.MaskSecret(parts[2])
 		}

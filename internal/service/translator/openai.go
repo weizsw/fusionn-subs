@@ -14,15 +14,14 @@ import (
 	"github.com/fusionn-subs/pkg/logger"
 )
 
-// LocalLLMTranslator implements translation using a custom OpenAI-compatible server via llm-subtrans.sh
-type LocalLLMTranslator struct {
+type OpenAITranslator struct {
 	scriptPath     string
 	workDir        string
 	mu             sync.RWMutex
-	baseURL        string
 	apiKey         string
 	model          string
-	endpoint       string
+	apiBase        string
+	useHTTPX       bool
 	instruction    string
 	rateLimit      int
 	maxBatchSize   int
@@ -31,32 +30,27 @@ type LocalLLMTranslator struct {
 	outputSuffix   string
 }
 
-type localLLMSnapshot struct {
-	baseURL        string
+type openAISnapshot struct {
 	apiKey         string
 	model          string
-	endpoint       string
+	apiBase        string
+	useHTTPX       bool
 	instruction    string
 	rateLimit      int
 	maxBatchSize   int
 	timeout        time.Duration
 	targetLanguage string
+	outputSuffix   string
 }
 
-// NewLocalLLMTranslator creates a new local LLM (custom server) translator
-func NewLocalLLMTranslator(cfg config.LocalLLMConfig, targetLang, outputSuffix string) *LocalLLMTranslator {
-	scriptPath := os.Getenv("LLM_SUBTRANS_SCRIPT_PATH")
+func NewOpenAITranslator(cfg config.OpenAIConfig, targetLang, outputSuffix string) *OpenAITranslator {
+	scriptPath := os.Getenv("OPENAI_SCRIPT_PATH")
 	if scriptPath == "" {
-		scriptPath = "/opt/llm-subtrans/llm-subtrans.sh"
+		scriptPath = "/opt/llm-subtrans/gpt-subtrans.sh"
 	}
 	workDir := os.Getenv("LLM_SUBTRANS_DIR")
 	if workDir == "" {
 		workDir = "/opt/llm-subtrans"
-	}
-
-	endpoint := cfg.Endpoint
-	if endpoint == "" {
-		endpoint = config.DefaultOpenAIChatCompletionsEndpoint
 	}
 
 	rateLimit := cfg.RateLimit
@@ -66,16 +60,16 @@ func NewLocalLLMTranslator(cfg config.LocalLLMConfig, targetLang, outputSuffix s
 
 	timeout := cfg.Timeout
 	if timeout == 0 {
-		timeout = config.DefaultLocalLLMTimeout
+		timeout = config.DefaultOpenAITimeout
 	}
 
-	return &LocalLLMTranslator{
+	return &OpenAITranslator{
 		scriptPath:     scriptPath,
 		workDir:        workDir,
-		baseURL:        cfg.BaseURL,
 		apiKey:         cfg.APIKey,
 		model:          cfg.Model,
-		endpoint:       endpoint,
+		apiBase:        cfg.APIBase,
+		useHTTPX:       cfg.UseHTTPX,
 		instruction:    cfg.Instruction,
 		rateLimit:      rateLimit,
 		maxBatchSize:   cfg.MaxBatchSize,
@@ -85,42 +79,30 @@ func NewLocalLLMTranslator(cfg config.LocalLLMConfig, targetLang, outputSuffix s
 	}
 }
 
-// Translate translates subtitles using a local/custom OpenAI-compatible endpoint
-func (t *LocalLLMTranslator) Translate(ctx context.Context, req Request) (string, error) {
+func (t *OpenAITranslator) Translate(ctx context.Context, req Request) (string, error) {
 	msg := req.Job
 	if err := msg.Validate(); err != nil {
 		return "", fmt.Errorf("invalid message: %w", err)
 	}
 
-	outputPath := msg.OutputPath(t.outputSuffix)
-
-	t.mu.RLock()
-	snapshot := localLLMSnapshot{
-		baseURL:        t.baseURL,
-		apiKey:         t.apiKey,
-		model:          t.model,
-		endpoint:       t.endpoint,
-		instruction:    t.instruction,
-		rateLimit:      t.rateLimit,
-		maxBatchSize:   t.maxBatchSize,
-		timeout:        t.timeout,
-		targetLanguage: t.targetLanguage,
-	}
-	t.mu.RUnlock()
+	snapshot := t.snapshot()
+	outputPath := msg.OutputPath(snapshot.outputSuffix)
 
 	ctxTimeout, cancel := context.WithTimeout(ctx, snapshot.timeout)
 	defer cancel()
 
-	args := buildLocalLLMArgs(req, outputPath, snapshot)
-
+	args := buildOpenAIArgs(req, outputPath, snapshot)
 	cmd := exec.CommandContext(ctxTimeout, t.scriptPath, args...)
 	if t.workDir != "" {
 		cmd.Dir = t.workDir
 	}
 
 	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
+	if strings.TrimSpace(snapshot.apiKey) != "" {
+		cmd.Env = append(cmd.Env, "OPENAI_API_KEY="+snapshot.apiKey)
+	}
 
-	logger.Infof("🔄 Starting translation (Local LLM): %s → %s", msg.SubtitlePath, outputPath)
+	logger.Infof("🔄 Starting translation (OpenAI): %s → %s", msg.SubtitlePath, outputPath)
 	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
 
 	resultPath, _, err := executeScript(cmd, outputPath)
@@ -132,26 +114,47 @@ func (t *LocalLLMTranslator) Translate(ctx context.Context, req Request) (string
 	return resultPath, nil
 }
 
-func buildLocalLLMArgs(req Request, outputPath string, snapshot localLLMSnapshot) []string {
+func (t *OpenAITranslator) buildArgs(req Request, outputPath string) []string {
+	return buildOpenAIArgs(req, outputPath, t.snapshot())
+}
+
+func (t *OpenAITranslator) snapshot() openAISnapshot {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	return openAISnapshot{
+		apiKey:         t.apiKey,
+		model:          t.model,
+		apiBase:        t.apiBase,
+		useHTTPX:       t.useHTTPX,
+		instruction:    t.instruction,
+		rateLimit:      t.rateLimit,
+		maxBatchSize:   t.maxBatchSize,
+		timeout:        t.timeout,
+		targetLanguage: t.targetLanguage,
+		outputSuffix:   t.outputSuffix,
+	}
+}
+
+func buildOpenAIArgs(req Request, outputPath string, snapshot openAISnapshot) []string {
 	msg := req.Job
 	args := []string{
 		msg.SubtitlePath,
 		"-o", outputPath,
 		"-l", snapshot.targetLanguage,
-		"-s", snapshot.baseURL,
-		"-e", snapshot.endpoint,
 	}
 
 	if strings.TrimSpace(snapshot.apiKey) != "" {
 		args = append(args, "-k", snapshot.apiKey)
 	}
-
 	if strings.TrimSpace(snapshot.model) != "" {
 		args = append(args, "-m", snapshot.model)
 	}
-
-	if strings.Contains(strings.ToLower(snapshot.endpoint), "chat") {
-		args = append(args, "--chat", "--systemmessages")
+	if strings.TrimSpace(snapshot.apiBase) != "" {
+		args = append(args, "-b", snapshot.apiBase)
+		if snapshot.useHTTPX {
+			args = append(args, "--httpx")
+		}
 	}
 
 	if mediaTitle := strings.TrimSpace(msg.MediaTitle); mediaTitle != "" {
@@ -173,25 +176,28 @@ func buildLocalLLMArgs(req Request, outputPath string, snapshot localLLMSnapshot
 	return appendTerminologyArgs(args, req)
 }
 
-// UpdateFromConfig reloads translator settings from the full config (hot-reload)
-func (t *LocalLLMTranslator) UpdateFromConfig(cfg *config.Config) {
+func (t *OpenAITranslator) UpdateFromConfig(cfg *config.Config) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.baseURL = cfg.LocalLLM.BaseURL
-	t.apiKey = cfg.LocalLLM.APIKey
-	t.model = cfg.LocalLLM.Model
-	t.endpoint = cfg.LocalLLM.Endpoint
-	if t.endpoint == "" {
-		t.endpoint = config.DefaultOpenAIChatCompletionsEndpoint
+	openAICfg := cfg.OpenAI
+	rateLimit := openAICfg.RateLimit
+	if rateLimit == 0 {
+		rateLimit = 10
 	}
-	t.instruction = cfg.LocalLLM.Instruction
-	t.rateLimit = cfg.LocalLLM.RateLimit
-	t.maxBatchSize = cfg.LocalLLM.MaxBatchSize
-	t.timeout = cfg.LocalLLM.Timeout
-	if t.timeout == 0 {
-		t.timeout = config.DefaultLocalLLMTimeout
+	timeout := openAICfg.Timeout
+	if timeout == 0 {
+		timeout = config.DefaultOpenAITimeout
 	}
 
-	logger.Infof("🔄 Local LLM config reloaded: %s (model: %s)", t.baseURL, t.model)
+	t.apiKey = openAICfg.APIKey
+	t.model = openAICfg.Model
+	t.apiBase = openAICfg.APIBase
+	t.useHTTPX = openAICfg.UseHTTPX
+	t.instruction = openAICfg.Instruction
+	t.rateLimit = rateLimit
+	t.maxBatchSize = openAICfg.MaxBatchSize
+	t.timeout = timeout
+
+	logger.Infof("🔄 OpenAI config reloaded: model=%s", t.model)
 }
