@@ -22,7 +22,7 @@ Rules:
 - Use translation_mode "contextual" only when the term is worth remembering but should not be injected as one fixed SOURCE::TRANSLATION mapping.
 - Skip common real-world places with standard translations, such as New York, unless snippets show special media-specific meaning.
 - Skip ordinary street names or addresses, such as Madison Avenue, unless used as a recurring concept or organization.
-- Skip malformed phrases such as Have Carbone; return the meaningful proper noun instead, such as Carbone, only if it needs consistency guidance.
+- Skip malformed phrases such as Have Carbone. If the meaningful proper noun is also present as a candidate, return that candidate instead; otherwise skip the malformed phrase.
 - Skip common English words only capitalized because they start a sentence.
 - Skip generic speaker labels and caption descriptions, such as MAN, WOMAN, Door Opens, and Phone Ringing.
 - Skip common abbreviations with stable obvious translations, such as OK or TV, unless they are media-specific.
