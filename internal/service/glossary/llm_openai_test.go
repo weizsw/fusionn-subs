@@ -92,6 +92,17 @@ func TestGlossaryPromptUsesResponseSchemaAndCandidateFieldNames(t *testing.T) {
 	if got := payload.Candidates[0]["normalized_term"]; got != "so15" {
 		t.Fatalf("candidate normalized_term = %v, want so15; prompt = %s", got, prompt)
 	}
+	if got := payload.Candidates[0]["frequency"]; got != float64(3) {
+		t.Fatalf("candidate frequency = %v, want 3; prompt = %s", got, prompt)
+	}
+	snippets, ok := payload.Candidates[0]["snippets"].([]any)
+	if !ok || len(snippets) != 1 || snippets[0] != "SO15 asked DCI Carey" {
+		got := payload.Candidates[0]["snippets"]
+		t.Fatalf("candidate snippets = %v, want SO15 snippet; prompt = %s", got, prompt)
+	}
+	if _, ok := payload.Candidates[0]["term"]; ok {
+		t.Fatalf("candidate includes legacy term field; prompt = %s", prompt)
+	}
 
 	prompt, err = buildGlossaryUserPrompt(GenerateRequest{
 		ExistingEntries: []PromptEntry{{
@@ -115,6 +126,11 @@ func TestGlossaryPromptUsesResponseSchemaAndCandidateFieldNames(t *testing.T) {
 	if got := payload.Existing[0]["target"]; got != "SO15" {
 		t.Fatalf("existing target = %v, want SO15; prompt = %s", got, prompt)
 	}
+	for _, legacyField := range []string{"source_term", "normalized_term", "target_text"} {
+		if _, ok := payload.Existing[0][legacyField]; ok {
+			t.Fatalf("existing entry includes legacy %s field; prompt = %s", legacyField, prompt)
+		}
+	}
 }
 
 func TestGlossarySystemPromptDescribesSelectiveGeneration(t *testing.T) {
@@ -126,7 +142,8 @@ func TestGlossarySystemPromptDescribesSelectiveGeneration(t *testing.T) {
 		"Use translation_mode \"contextual\" only when the term is worth remembering",
 		"Skip common real-world places with standard translations, such as New York",
 		"Skip ordinary street names or addresses, such as Madison Avenue",
-		"Skip malformed phrases such as Have Carbone",
+		"Skip malformed phrases such as Have Carbone. If the meaningful proper noun is also present as a candidate",
+		"otherwise skip the malformed phrase",
 		"Skip common English words only capitalized because they start a sentence",
 		"Skip generic speaker labels and caption descriptions",
 		"Skip common abbreviations with stable obvious translations, such as OK or TV",
