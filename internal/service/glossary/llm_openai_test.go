@@ -148,6 +148,9 @@ func TestGlossarySystemPromptDescribesSelectiveGeneration(t *testing.T) {
 		"Skip generic speaker labels and caption descriptions",
 		"Skip common abbreviations with stable obvious translations, such as OK or TV",
 		"Skip phrases whose target translation should vary by sentence",
+		"Skip ordinary person or character names that appear only once",
+		"Do not invent or guess a fixed target translation",
+		"If no candidate clearly needs glossary guidance, return an empty entries array",
 	} {
 		if !strings.Contains(glossarySystemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, glossarySystemPrompt)

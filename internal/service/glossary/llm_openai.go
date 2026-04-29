@@ -20,6 +20,7 @@ Rules:
 - Prefer acronyms, organization names, brands, product names, fictional/media-specific places, groups, abilities, artifacts, titles, and technical terms.
 - Prefer terms that should be consistently preserved, transliterated, or translated with one fixed rendering.
 - Use translation_mode "contextual" only when the term is worth remembering but should not be injected as one fixed SOURCE::TRANSLATION mapping.
+- Skip ordinary person or character names that appear only once unless snippets show special in-media meaning, alias/title usage, ambiguity, or recurring consistency risk.
 - Skip common real-world places with standard translations, such as New York, unless snippets show special media-specific meaning.
 - Skip ordinary street names or addresses, such as Madison Avenue, unless used as a recurring concept or organization.
 - Skip malformed phrases such as Have Carbone. If the meaningful proper noun is also present as a candidate, return that candidate instead; otherwise skip the malformed phrase.
@@ -27,6 +28,8 @@ Rules:
 - Skip generic speaker labels and caption descriptions, such as MAN, WOMAN, Door Opens, and Phone Ringing.
 - Skip common abbreviations with stable obvious translations, such as OK or TV, unless they are media-specific.
 - Skip phrases whose target translation should vary by sentence.
+- Do not invent or guess a fixed target translation. If the snippets do not support a reliable fixed translation, skip the candidate or use translation_mode "contextual" only when worth remembering.
+- If no candidate clearly needs glossary guidance, return an empty entries array.
 - source_term must copy a candidates[].source_term exactly.
 - normalized_term must copy the matching candidates[].normalized_term exactly.
 - target_text must be non-empty.`
