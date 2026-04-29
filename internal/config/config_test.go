@@ -6,10 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fusionn-subs/internal/util"
-	"github.com/fusionn-subs/pkg/logger"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/fusionn-subs/internal/util"
+	"github.com/fusionn-subs/pkg/logger"
 )
 
 func validConfigForTest() *Config {

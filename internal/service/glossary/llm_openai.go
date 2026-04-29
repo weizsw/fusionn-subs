@@ -48,7 +48,7 @@ func (c *OpenAICompatibleClient) GenerateGlossary(ctx context.Context, req Gener
 		return GenerateResponse{}, err
 	}
 	resp, err := c.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model:       openai.ChatModel(c.cfg.Model),
+		Model:       c.cfg.Model,
 		Temperature: openai.Float(c.cfg.Temperature),
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.DeveloperMessage(glossarySystemPrompt),
@@ -94,9 +94,7 @@ func buildGlossaryUserPrompt(req GenerateRequest) (string, error) {
 func normalizeOpenAIBaseURL(baseURL, endpoint string) string {
 	baseURL = strings.TrimRight(baseURL, "/")
 	endpoint = strings.TrimRight(endpoint, "/")
-	if strings.HasSuffix(endpoint, openAIChatCompletionsEndpointSuffix) {
-		endpoint = strings.TrimSuffix(endpoint, openAIChatCompletionsEndpointSuffix)
-	}
+	endpoint = strings.TrimSuffix(endpoint, openAIChatCompletionsEndpointSuffix)
 	if endpoint == "" {
 		return baseURL
 	}

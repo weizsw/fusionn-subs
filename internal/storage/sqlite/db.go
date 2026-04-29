@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 
 	"github.com/pressly/goose/v3"
+
+	// Register the pure-Go SQLite driver for database/sql.
 	_ "modernc.org/sqlite"
 )
 

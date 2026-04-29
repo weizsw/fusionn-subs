@@ -10,7 +10,7 @@ import (
 	astisub "github.com/asticode/go-astisub"
 )
 
-var candidatePattern = regexp.MustCompile(`\b(?:[A-Z]{2,}[0-9]*|[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b`)
+var candidatePattern = regexp.MustCompile(`\b(?:[A-Z]{2,}\d*|[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b`)
 
 func ExtractCandidates(path string, opts ExtractOptions) ([]Candidate, error) {
 	if opts.MaxSubtitleBytes > 0 {

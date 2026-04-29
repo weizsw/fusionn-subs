@@ -161,7 +161,7 @@ func (s *Service) recordFailed(ctx context.Context, msg types.JobMessage, mediaK
 		Error:            cause.Error(),
 	})
 	if recordErr != nil {
-		return fmt.Errorf("%w; record glossary job: %v", cause, recordErr)
+		return fmt.Errorf("%w; record glossary job: %w", cause, recordErr)
 	}
 	return cause
 }
