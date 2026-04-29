@@ -94,6 +94,8 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (Payload, e
 	}
 	defer cancel()
 
+	logger.Infof("Glossary LLM generation started: job_id=%s media_key=%s target_language=%s candidates=%d existing_entries=%d", msg.JobID, mediaKey.Value, s.cfg.TargetLanguage, len(candidates), len(entries))
+	llmStartedAt := time.Now()
 	resp, err := s.llm.GenerateGlossary(llmCtx, GenerateRequest{
 		Job:             msg,
 		MediaKey:        mediaKey.Value,
@@ -101,13 +103,15 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (Payload, e
 		ExistingEntries: entries,
 		Candidates:      candidates,
 	})
+	llmDuration := time.Since(llmStartedAt).Round(time.Millisecond)
 	if err != nil {
-		logger.Warnf("glossary LLM generation skipped: %v", err)
+		logger.Warnf("glossary LLM generation skipped: job_id=%s media_key=%s candidates=%d duration=%s error=%v", msg.JobID, mediaKey.Value, len(candidates), llmDuration, err)
 		if err := s.recordCompleted(ctx, msg, mediaKey.Value); err != nil {
 			return Payload{}, err
 		}
 		return currentPayload(), nil
 	}
+	logger.Infof("Glossary LLM generation completed: job_id=%s media_key=%s entries=%d duration=%s", msg.JobID, mediaKey.Value, len(resp.Entries), llmDuration)
 
 	result, err := s.store.UpsertGeneratedEntries(ctx, UpsertRequest{
 		Job:            msg,

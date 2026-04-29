@@ -126,6 +126,30 @@ Have Carbone cater the event.
 	}
 }
 
+func TestExtractCandidatesFiltersAdditionalMalformedPhraseStarters(t *testing.T) {
+	found := extractCandidateMap(t, "episode.srt", `1
+00:00:01,000 --> 00:00:03,000
+What Carbone wants is impossible.
+
+2
+00:00:04,000 --> 00:00:06,000
+Call Carbone tomorrow.
+
+3
+00:00:07,000 --> 00:00:09,000
+Meet Carbone there.
+`, ExtractOptions{})
+
+	for _, term := range []string{"what carbone", "call carbone", "meet carbone"} {
+		if _, ok := found[term]; ok {
+			t.Fatalf("did not expect malformed phrase %q, got %#v", term, found)
+		}
+	}
+	if found["carbone"].Frequency != 3 {
+		t.Fatalf("Carbone frequency = %d, got %#v", found["carbone"].Frequency, found)
+	}
+}
+
 func TestExtractCandidatesFiltersCommonSingleWordNoise(t *testing.T) {
 	found := extractCandidateMap(t, "episode.srt", `1
 00:00:01,000 --> 00:00:03,000
@@ -136,6 +160,26 @@ Well, look, okay, thanks, yeah, you found the case.
 		if _, ok := found[term]; ok {
 			t.Fatalf("did not expect %q candidate, got %#v", term, found)
 		}
+	}
+}
+
+func TestExtractCandidatesFiltersCommonAcronymNoise(t *testing.T) {
+	found := extractCandidateMap(t, "episode.srt", `1
+00:00:01,000 --> 00:00:03,000
+OK, the TV feed mentioned SO15.
+
+2
+00:00:04,000 --> 00:00:06,000
+OK, SO15 called again.
+`, ExtractOptions{})
+
+	for _, term := range []string{"ok", "tv"} {
+		if _, ok := found[term]; ok {
+			t.Fatalf("did not expect noisy acronym %q candidate, got %#v", term, found)
+		}
+	}
+	if _, ok := found["so15"]; !ok {
+		t.Fatalf("expected SO15 candidate, got %#v", found)
 	}
 }
 
@@ -276,6 +320,49 @@ Dr. House briefed DCI Carey about Hermès.
 `, ExtractOptions{})
 
 	for _, term := range []string{"spider-man", "o'neill", "mi6", "g-force", "studio 54", "s.h.i.e.l.d.", "at&t", "r&d", "bank of america", "dr. house", "dci carey", "hermès"} {
+		if _, ok := found[term]; !ok {
+			t.Fatalf("expected %q candidate, got %#v", term, found)
+		}
+	}
+}
+
+func TestExtractCandidatesIncludesSlashAcronyms(t *testing.T) {
+	found := extractCandidateMap(t, "episode.srt", `1
+00:00:01,000 --> 00:00:03,000
+The A/V feed mentioned AC/DC and SO15/MI6.
+`, ExtractOptions{})
+
+	for _, term := range []string{"a/v", "ac/dc", "so15/mi6"} {
+		if _, ok := found[term]; !ok {
+			t.Fatalf("expected %q candidate, got %#v", term, found)
+		}
+	}
+}
+
+func TestExtractCandidatesAllowsThePrefixedProperPhrases(t *testing.T) {
+	found := extractCandidateMap(t, "episode.srt", `1
+00:00:01,000 --> 00:00:03,000
+The Hague appeared in The Matrix.
+`, ExtractOptions{})
+
+	for _, term := range []string{"the hague", "the matrix"} {
+		if _, ok := found[term]; !ok {
+			t.Fatalf("expected %q candidate, got %#v", term, found)
+		}
+	}
+}
+
+func TestExtractCandidatesIncludesTitleAndConnectorPhraseVariants(t *testing.T) {
+	found := extractCandidateMap(t, "episode.srt", `1
+00:00:01,000 --> 00:00:03,000
+Mr. Robot met Ms. Marvel near St. Mary's.
+
+2
+00:00:04,000 --> 00:00:06,000
+Lord of the Rings reached House of Commons.
+`, ExtractOptions{})
+
+	for _, term := range []string{"mr. robot", "ms. marvel", "st. mary", "lord of the rings", "house of commons"} {
 		if _, ok := found[term]; !ok {
 			t.Fatalf("expected %q candidate, got %#v", term, found)
 		}

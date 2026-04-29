@@ -24,12 +24,14 @@ const (
 var (
 	candidatePatterns = []candidatePatternSpec{
 		{regexp.MustCompile(`\b(?:[A-Z]\.){2,}(?:[A-Z]\.)?`), candidatePriorityAcronym},
+		{regexp.MustCompile(`\b[A-Z]+\d*(?:/[A-Z]+\d*)+\b`), candidatePriorityAcronym},
 		{regexp.MustCompile(`\b(?:[A-Z]{2,}\d*|[A-Z]+\d+|\d*[A-Z]{2,})\b`), candidatePriorityAcronym},
 		{regexp.MustCompile(`(?:[a-z]+[A-Z][A-Za-z]*|\p{Lu}[\p{Ll}\p{M}]{3,}s)(?:['’]s)?`), candidatePriorityBrand},
 		{regexp.MustCompile(`\b[A-Za-z]+&[A-Za-z]+(?:&[A-Za-z]+)*\b`), candidatePrioritySpecial},
 		{regexp.MustCompile(`(?:\p{Lu}[\p{Ll}\p{M}]+|\p{Lu}+)(?:-(?:\p{Lu}[\p{Ll}\p{M}]+|\p{Lu}+|\d+))+`), candidatePrioritySpecial},
 		{regexp.MustCompile(`\p{Lu}[\p{L}\p{M}]*['’]\p{Lu}[\p{Ll}\p{M}]+(?:['’]s)?`), candidatePrioritySpecial},
-		{regexp.MustCompile(`(?:Dr\.|DCI)\s+\p{Lu}[\p{Ll}\p{M}]+(?:['’]s)?`), candidatePriorityTitle},
+		{regexp.MustCompile(`(?:Dr\.|Mr\.|Mrs\.|Ms\.|St\.|DCI)\s+\p{Lu}[\p{L}\p{M}]*(?:[-'’]\p{L}\p{M}+)*(?:['’]s)?`), candidatePriorityTitle},
+		{regexp.MustCompile(`\p{Lu}[\p{Ll}\p{M}]+(?:\s+\p{Lu}[\p{Ll}\p{M}]+)*\s+(?:of|the|for|de|del|la|le|van|von|du)(?:\s+(?:of|the|for|de|del|la|le|van|von|du))*\s+\p{Lu}[\p{Ll}\p{M}]+(?:\s+(?:\p{Lu}[\p{Ll}\p{M}]+|of|the|for|de|del|la|le|van|von|du)){0,3}`), candidatePriorityPhrase},
 		{regexp.MustCompile(`\p{Lu}[\p{Ll}\p{M}]+(?:\s+(?:of|the|for|de|del|la|le|van|von|du)\s+\p{Lu}[\p{Ll}\p{M}]+)+`), candidatePriorityPhrase},
 		{regexp.MustCompile(`\p{Lu}[\p{Ll}\p{M}]+(?:\s+(?:\p{Lu}[\p{Ll}\p{M}]+|\d+)){1,3}`), candidatePriorityPhrase},
 		{regexp.MustCompile(`(?:[a-z]+[A-Z][A-Za-z]*|\p{Lu}[\p{Ll}\p{M}]+)(?:['’]s)?`), candidatePrioritySingleProper},
@@ -168,7 +170,7 @@ func prepareCandidateLine(line string) string {
 		switch {
 		case unicode.Is(unicode.Latin, r), unicode.IsDigit(r), unicode.IsSpace(r):
 			b.WriteRune(r)
-		case r == '\'' || r == '’' || r == '-' || r == '.' || r == '&':
+		case r == '\'' || r == '’' || r == '-' || r == '.' || r == '&' || r == '/':
 			b.WriteRune(r)
 		default:
 			b.WriteByte(' ')
@@ -339,7 +341,7 @@ func coveredByKeptMatch(match candidateMatch, kept []candidateMatch) bool {
 }
 
 func hasSpecialPunctuation(term string) bool {
-	return strings.ContainsAny(term, "-'’&.")
+	return strings.ContainsAny(term, "-'’&./")
 }
 
 func shouldKeepCandidate(state *candidateState) bool {
@@ -384,7 +386,11 @@ func hasDanglingConnector(term string) bool {
 	if len(parts) == 0 {
 		return true
 	}
-	return connectorWords[parts[0]] || connectorWords[parts[len(parts)-1]]
+	firstIsDangling := connectorWords[parts[0]]
+	if parts[0] == "the" && len(parts) > 1 {
+		firstIsDangling = false
+	}
+	return firstIsDangling || connectorWords[parts[len(parts)-1]]
 }
 
 func isSentenceInitial(line string, start int) bool {
@@ -405,9 +411,11 @@ func isBrandLikeSingleton(term string) bool {
 
 var commonSingleWordNoise = map[string]bool{
 	"look":   true,
+	"ok":     true,
 	"okay":   true,
 	"thanks": true,
 	"the":    true,
+	"tv":     true,
 	"well":   true,
 	"yeah":   true,
 	"you":    true,
@@ -424,15 +432,20 @@ var commonSpeakerLabels = map[string]bool{
 }
 
 var malformedPhraseStarters = map[string]bool{
+	"ask":  true,
+	"call": true,
 	"come": true,
 	"get":  true,
 	"go":   true,
 	"have": true,
+	"how":  true,
 	"let":  true,
 	"look": true,
+	"meet": true,
 	"see":  true,
 	"tell": true,
 	"well": true,
+	"what": true,
 }
 
 var connectorWords = map[string]bool{
