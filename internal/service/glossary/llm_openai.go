@@ -13,7 +13,23 @@ import (
 const (
 	defaultOpenAIChatCompletionsEndpoint = "/v1/chat/completions"
 	openAIChatCompletionsEndpointSuffix  = "/chat/completions"
-	glossarySystemPrompt                 = "You extract subtitle glossary entries. Return strict JSON only with an entries array."
+	glossarySystemPrompt                 = `You extract subtitle glossary entries from candidates. Return strict JSON only with this shape:
+{"entries":[{"source_term":"...","normalized_term":"...","target_language":"...","target_text":"...","definition":"...","translation_mode":"translate|preserve|transliterate|contextual","category":"acronym|organization|brand|product|character|place|technical_term|phrase","confidence":0.0,"evidence":["..."]}]}
+Rules:
+- Return entries only for candidates likely to cause consistency problems across subtitle lines or episodes.
+- Prefer acronyms, organization names, brands, product names, fictional/media-specific places, groups, abilities, artifacts, titles, and technical terms.
+- Prefer terms that should be consistently preserved, transliterated, or translated with one fixed rendering.
+- Use translation_mode "contextual" only when the term is worth remembering but should not be injected as one fixed SOURCE::TRANSLATION mapping.
+- Skip common real-world places with standard translations, such as New York, unless snippets show special media-specific meaning.
+- Skip ordinary street names or addresses, such as Madison Avenue, unless used as a recurring concept or organization.
+- Skip malformed phrases such as Have Carbone; return the meaningful proper noun instead, such as Carbone, only if it needs consistency guidance.
+- Skip common English words only capitalized because they start a sentence.
+- Skip generic speaker labels and caption descriptions, such as MAN, WOMAN, Door Opens, and Phone Ringing.
+- Skip common abbreviations with stable obvious translations, such as OK or TV, unless they are media-specific.
+- Skip phrases whose target translation should vary by sentence.
+- source_term must copy a candidates[].source_term exactly.
+- normalized_term must copy the matching candidates[].normalized_term exactly.
+- target_text must be non-empty.`
 )
 
 type OpenAICompatibleConfig struct {
@@ -65,15 +81,59 @@ func (c *OpenAICompatibleClient) GenerateGlossary(ctx context.Context, req Gener
 }
 
 func buildGlossaryUserPrompt(req GenerateRequest) (string, error) {
+	type promptCandidate struct {
+		SourceTerm     string   `json:"source_term"`
+		NormalizedTerm string   `json:"normalized_term"`
+		Frequency      int      `json:"frequency"`
+		Snippets       []string `json:"snippets,omitempty"`
+	}
+	type promptEntry struct {
+		Scope           Scope           `json:"scope"`
+		MediaKey        string          `json:"media_key,omitempty"`
+		SourceTerm      string          `json:"source_term"`
+		NormalizedTerm  string          `json:"normalized_term"`
+		TargetLanguage  string          `json:"target_language"`
+		TargetText      string          `json:"target_text"`
+		Definition      string          `json:"definition,omitempty"`
+		TranslationMode TranslationMode `json:"translation_mode"`
+		Category        Category        `json:"category"`
+		Confidence      float64         `json:"confidence"`
+		EvidenceCount   int             `json:"evidence_count"`
+	}
+	candidates := make([]promptCandidate, 0, len(req.Candidates))
+	for _, candidate := range req.Candidates {
+		candidates = append(candidates, promptCandidate{
+			SourceTerm:     candidate.Term,
+			NormalizedTerm: candidate.NormalizedTerm,
+			Frequency:      candidate.Frequency,
+			Snippets:       candidate.Snippets,
+		})
+	}
+	existing := make([]promptEntry, 0, len(req.ExistingEntries))
+	for _, entry := range req.ExistingEntries {
+		existing = append(existing, promptEntry{
+			Scope:           entry.Scope,
+			MediaKey:        entry.MediaKey,
+			SourceTerm:      promptDisplayTerm(entry),
+			NormalizedTerm:  strings.TrimSpace(entry.NormalizedTerm),
+			TargetLanguage:  entry.TargetLanguage,
+			TargetText:      entry.TargetText,
+			Definition:      entry.Definition,
+			TranslationMode: entry.TranslationMode,
+			Category:        entry.Category,
+			Confidence:      entry.Confidence,
+			EvidenceCount:   entry.EvidenceCount,
+		})
+	}
 	payload := struct {
-		MediaTitle     string        `json:"media_title"`
-		MediaType      string        `json:"media_type"`
-		Season         int           `json:"season,omitempty"`
-		Episode        int           `json:"episode,omitempty"`
-		MediaKey       string        `json:"media_key"`
-		TargetLanguage string        `json:"target_language"`
-		Candidates     []Candidate   `json:"candidates"`
-		Existing       []PromptEntry `json:"existing_entries"`
+		MediaTitle     string            `json:"media_title"`
+		MediaType      string            `json:"media_type"`
+		Season         int               `json:"season,omitempty"`
+		Episode        int               `json:"episode,omitempty"`
+		MediaKey       string            `json:"media_key"`
+		TargetLanguage string            `json:"target_language"`
+		Candidates     []promptCandidate `json:"candidates"`
+		Existing       []promptEntry     `json:"existing_entries"`
 	}{
 		MediaTitle:     req.Job.MediaTitle,
 		MediaType:      req.Job.MediaType,
@@ -81,8 +141,8 @@ func buildGlossaryUserPrompt(req GenerateRequest) (string, error) {
 		Episode:        req.Job.Episode,
 		MediaKey:       req.MediaKey,
 		TargetLanguage: req.TargetLanguage,
-		Candidates:     req.Candidates,
-		Existing:       req.ExistingEntries,
+		Candidates:     candidates,
+		Existing:       existing,
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {

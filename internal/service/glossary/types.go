@@ -33,6 +33,8 @@ const (
 
 	CategoryAcronym       Category = "acronym"
 	CategoryOrganization  Category = "organization"
+	CategoryBrand         Category = "brand"
+	CategoryProduct       Category = "product"
 	CategoryCharacter     Category = "character"
 	CategoryPlace         Category = "place"
 	CategoryTechnicalTerm Category = "technical_term"
