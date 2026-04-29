@@ -81,6 +81,7 @@ func TestGlossaryPromptUsesResponseSchemaAndCandidateFieldNames(t *testing.T) {
 
 	var payload struct {
 		Candidates []map[string]any `json:"candidates"`
+		Existing   []map[string]any `json:"existing_entries"`
 	}
 	if err := json.Unmarshal([]byte(prompt), &payload); err != nil {
 		t.Fatalf("decode prompt: %v", err)
@@ -91,17 +92,45 @@ func TestGlossaryPromptUsesResponseSchemaAndCandidateFieldNames(t *testing.T) {
 	if got := payload.Candidates[0]["normalized_term"]; got != "so15" {
 		t.Fatalf("candidate normalized_term = %v, want so15; prompt = %s", got, prompt)
 	}
+
+	prompt, err = buildGlossaryUserPrompt(GenerateRequest{
+		ExistingEntries: []PromptEntry{{
+			DisplayTerm:    "SO15",
+			NormalizedTerm: "so15",
+			TargetText:     "SO15",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("build prompt with existing entries: %v", err)
+	}
+	if err := json.Unmarshal([]byte(prompt), &payload); err != nil {
+		t.Fatalf("decode prompt with existing entries: %v", err)
+	}
+	if got := payload.Existing[0]["source"]; got != "SO15" {
+		t.Fatalf("existing source = %v, want SO15; prompt = %s", got, prompt)
+	}
+	if got := payload.Existing[0]["normalized"]; got != "so15" {
+		t.Fatalf("existing normalized = %v, want so15; prompt = %s", got, prompt)
+	}
+	if got := payload.Existing[0]["target"]; got != "SO15" {
+		t.Fatalf("existing target = %v, want SO15; prompt = %s", got, prompt)
+	}
 }
 
 func TestGlossarySystemPromptDescribesSelectiveGeneration(t *testing.T) {
 	for _, want := range []string{
 		"brand|product",
 		"Return entries only for candidates likely to cause consistency problems",
+		"Prefer acronyms, organization names, brands, product names",
+		"Prefer terms that should be consistently preserved, transliterated, or translated with one fixed rendering",
+		"Use translation_mode \"contextual\" only when the term is worth remembering",
 		"Skip common real-world places with standard translations, such as New York",
 		"Skip ordinary street names or addresses, such as Madison Avenue",
 		"Skip malformed phrases such as Have Carbone",
+		"Skip common English words only capitalized because they start a sentence",
 		"Skip generic speaker labels and caption descriptions",
 		"Skip common abbreviations with stable obvious translations, such as OK or TV",
+		"Skip phrases whose target translation should vary by sentence",
 	} {
 		if !strings.Contains(glossarySystemPrompt, want) {
 			t.Fatalf("system prompt missing %q:\n%s", want, glossarySystemPrompt)

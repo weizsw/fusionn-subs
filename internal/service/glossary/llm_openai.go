@@ -90,10 +90,10 @@ func buildGlossaryUserPrompt(req GenerateRequest) (string, error) {
 	type promptEntry struct {
 		Scope           Scope           `json:"scope"`
 		MediaKey        string          `json:"media_key,omitempty"`
-		SourceTerm      string          `json:"source_term"`
-		NormalizedTerm  string          `json:"normalized_term"`
+		SourceTerm      string          `json:"source"`
+		NormalizedTerm  string          `json:"normalized"`
 		TargetLanguage  string          `json:"target_language"`
-		TargetText      string          `json:"target_text"`
+		TargetText      string          `json:"target"`
 		Definition      string          `json:"definition,omitempty"`
 		TranslationMode TranslationMode `json:"translation_mode"`
 		Category        Category        `json:"category"`
