@@ -228,8 +228,8 @@ func isCaptionOnlyLine(line string) bool {
 		return false
 	}
 	pairs := map[byte]byte{'(': ')', '[': ']'}
-	close, ok := pairs[line[0]]
-	if !ok || line[len(line)-1] != close {
+	closing, ok := pairs[line[0]]
+	if !ok || line[len(line)-1] != closing {
 		return false
 	}
 	inner := strings.TrimSpace(line[1 : len(line)-1])
