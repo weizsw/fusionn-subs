@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -77,7 +78,7 @@ func (s *GlossaryStore) UpsertGeneratedEntries(ctx context.Context, req glossary
 	if err != nil {
 		return glossary.UpsertResult{}, fmt.Errorf("begin glossary upsert: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var result glossary.UpsertResult
 	for _, entry := range req.Entries {
@@ -116,7 +117,7 @@ where id = ?`, entry.Confidence, entry.Definition, entry.Definition, variantID)
 				return result, fmt.Errorf("merge glossary variant: %w", err)
 			}
 			result.Merged++
-		case err == sql.ErrNoRows:
+		case errors.Is(err, sql.ErrNoRows):
 			res, err := tx.ExecContext(ctx, `
 insert into glossary_variants(term_id, target_language, target_text, definition, translation_mode, category, status, source, confidence, evidence_count)
 values (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
@@ -178,7 +179,7 @@ func (s *GlossaryStore) PromoteCommonEntries(ctx context.Context, opts glossary.
 	if err != nil {
 		return glossary.PromotionResult{}, fmt.Errorf("begin glossary promotion: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	rows, err := tx.QueryContext(ctx, `
 select t.normalized_term, min(t.display_term), v.target_text, max(v.definition),
@@ -279,7 +280,7 @@ where id = ?`, display, id)
 			return 0, fmt.Errorf("update glossary term: %w", err)
 		}
 		return id, nil
-	case err == sql.ErrNoRows:
+	case errors.Is(err, sql.ErrNoRows):
 		res, err := tx.ExecContext(ctx, `
 insert into glossary_terms(scope, media_key, normalized_term, display_term)
 values (?, ?, ?, ?)`, glossary.ScopeMedia, mediaKey, normalized, display)
