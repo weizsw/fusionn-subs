@@ -50,6 +50,35 @@ func TestOpenAICompatibleClientGenerateGlossary(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleClientSendsReasoningEffort(t *testing.T) {
+	var request struct {
+		ReasoningEffort string `json:"reasoning_effort"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"entries\":[]}"}}]}`))
+	}))
+	defer server.Close()
+
+	client := NewOpenAICompatibleClient(OpenAICompatibleConfig{
+		BaseURL:         server.URL,
+		APIKey:          "test-key",
+		Model:           "test-model",
+		ReasoningEffort: "high",
+	})
+
+	_, err := client.GenerateGlossary(context.Background(), GenerateRequest{})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if request.ReasoningEffort != "high" {
+		t.Fatalf("reasoning_effort = %q, want high", request.ReasoningEffort)
+	}
+}
+
 func TestGenerateResponseValidateRejectsInvalidConfidence(t *testing.T) {
 	err := (GenerateResponse{Entries: []GeneratedEntry{{
 		SourceTerm:     "X",
