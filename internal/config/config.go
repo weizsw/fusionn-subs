@@ -79,14 +79,15 @@ type OpenRouterConfig struct {
 }
 
 type OpenAIConfig struct {
-	APIKey       string        `mapstructure:"api_key"`
-	Model        string        `mapstructure:"model"`
-	APIBase      string        `mapstructure:"api_base"`
-	UseHTTPX     bool          `mapstructure:"use_httpx"`
-	Instruction  string        `mapstructure:"instruction"`
-	RateLimit    int           `mapstructure:"rate_limit"`
-	MaxBatchSize int           `mapstructure:"max_batch_size"`
-	Timeout      time.Duration `mapstructure:"timeout"`
+	APIKey         string        `mapstructure:"api_key"`
+	Model          string        `mapstructure:"model"`
+	FallbackModels []string      `mapstructure:"fallback_models"`
+	APIBase        string        `mapstructure:"api_base"`
+	UseHTTPX       bool          `mapstructure:"use_httpx"`
+	Instruction    string        `mapstructure:"instruction"`
+	RateLimit      int           `mapstructure:"rate_limit"`
+	MaxBatchSize   int           `mapstructure:"max_batch_size"`
+	Timeout        time.Duration `mapstructure:"timeout"`
 }
 
 type LocalLLMConfig struct {
@@ -337,9 +338,15 @@ func (c *Config) validateOpenAISection() error {
 	if strings.TrimSpace(c.OpenAI.APIKey) == "" && strings.TrimSpace(os.Getenv("OPENAI_API_KEY")) == "" {
 		return fmt.Errorf("openai.api_key or OPENAI_API_KEY is required when openai is in translator.providers")
 	}
-	if strings.TrimSpace(c.OpenAI.Model) == "" {
+	c.OpenAI.Model = strings.TrimSpace(c.OpenAI.Model)
+	if c.OpenAI.Model == "" {
 		return fmt.Errorf("openai.model is required when openai is in translator.providers")
 	}
+	fallbackModels, err := normalizeOpenAIFallbackModels(c.OpenAI.Model, c.OpenAI.FallbackModels)
+	if err != nil {
+		return err
+	}
+	c.OpenAI.FallbackModels = fallbackModels
 	if c.OpenAI.UseHTTPX && strings.TrimSpace(c.OpenAI.APIBase) == "" {
 		return fmt.Errorf("openai.use_httpx requires openai.api_base")
 	}
@@ -350,6 +357,26 @@ func (c *Config) validateOpenAISection() error {
 		c.OpenAI.Timeout = DefaultOpenAITimeout
 	}
 	return nil
+}
+
+func normalizeOpenAIFallbackModels(primary string, fallbackModels []string) ([]string, error) {
+	seen := map[string]struct{}{primary: {}}
+	out := make([]string, 0, len(fallbackModels))
+	for i, model := range fallbackModels {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			return nil, fmt.Errorf("openai.fallback_models[%d] is empty", i)
+		}
+		if model == primary {
+			return nil, fmt.Errorf("openai.fallback_models[%d] duplicates openai.model", i)
+		}
+		if _, ok := seen[model]; ok {
+			return nil, fmt.Errorf("openai.fallback_models[%d] duplicates %q", i, model)
+		}
+		seen[model] = struct{}{}
+		out = append(out, model)
+	}
+	return out, nil
 }
 
 func (c *Config) applyGlossaryDefaults() {
@@ -708,6 +735,7 @@ func (c *Config) SafeLogValues() map[string]any {
 		"openrouter.evaluator.schedule_hour":    c.OpenRouter.Evaluator.ScheduleHour,
 		"openai.api_key":                        util.MaskSecret(c.OpenAI.APIKey),
 		"openai.model":                          c.OpenAI.Model,
+		"openai.fallback_models":                c.OpenAI.FallbackModels,
 		"openai.api_base":                       c.OpenAI.APIBase,
 		"openai.use_httpx":                      c.OpenAI.UseHTTPX,
 		"openai.instruction":                    c.OpenAI.Instruction,

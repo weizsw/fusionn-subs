@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fusionn-subs/internal/types"
 	"github.com/fusionn-subs/pkg/logger"
@@ -45,6 +46,26 @@ type fakeLLM struct {
 
 func (f fakeLLM) GenerateGlossary(context.Context, GenerateRequest) (GenerateResponse, error) {
 	return f.resp, f.err
+}
+
+type trackingLLM struct {
+	called bool
+}
+
+func (f *trackingLLM) GenerateGlossary(context.Context, GenerateRequest) (GenerateResponse, error) {
+	f.called = true
+	return GenerateResponse{}, nil
+}
+
+type capturingLLM struct {
+	req    GenerateRequest
+	called bool
+}
+
+func (f *capturingLLM) GenerateGlossary(_ context.Context, req GenerateRequest) (GenerateResponse, error) {
+	f.req = req
+	f.called = true
+	return GenerateResponse{}, nil
 }
 
 func TestServiceUsesExistingGlossaryWhenLLMFails(t *testing.T) {
@@ -92,6 +113,156 @@ SO15 asked DCI Carey.
 	}
 	if !reflect.DeepEqual(payload, want) {
 		t.Fatalf("payload = %#v, want %#v", payload, want)
+	}
+}
+
+func TestServiceSkipsLLMWhenExtractionFindsNoCandidates(t *testing.T) {
+	subtitlePath := filepath.Join(t.TempDir(), "episode.srt")
+	if err := os.WriteFile(subtitlePath, []byte(`1
+00:00:01,000 --> 00:00:03,000
+thanks for coming over.
+`), 0o600); err != nil {
+		t.Fatalf("write subtitle: %v", err)
+	}
+
+	llm := &trackingLLM{}
+	svc := NewService(ServiceConfig{
+		Enabled:                 true,
+		TargetLanguage:          "zh-Hans",
+		MaxPromptEntries:        10,
+		MaxCandidates:           10,
+		MaxSnippetsPerCandidate: 1,
+		MaxSubtitleBytes:        1 << 20,
+		MaxCues:                 100,
+	}, fakeStore{}, llm)
+
+	_, err := svc.Prepare(context.Background(), types.JobMessage{
+		JobID:        "job-no-candidates",
+		MediaTitle:   "The Capture",
+		MediaType:    "series",
+		SubtitlePath: subtitlePath,
+	})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if llm.called {
+		t.Fatal("expected LLM call to be skipped")
+	}
+}
+
+func TestServiceCapsAndRanksExistingEntriesForLLM(t *testing.T) {
+	subtitlePath := filepath.Join(t.TempDir(), "episode.srt")
+	if err := os.WriteFile(subtitlePath, []byte(`1
+00:00:01,000 --> 00:00:03,000
+SO15 asked DCI Carey.
+`), 0o600); err != nil {
+		t.Fatalf("write subtitle: %v", err)
+	}
+
+	mediaKey := "title:series:the-capture"
+	entries := []PromptEntry{
+		{
+			Scope:          ScopeCommon,
+			NormalizedTerm: "echo",
+			DisplayTerm:    "Echo",
+			TargetText:     "回声",
+			Status:         StatusActive,
+			Source:         SourceGenerated,
+			Confidence:     0.80,
+		},
+		{
+			Scope:          ScopeMedia,
+			MediaKey:       mediaKey,
+			NormalizedTerm: "alpha",
+			DisplayTerm:    "Alpha",
+			TargetText:     "阿尔法",
+			Status:         StatusActive,
+			Source:         SourceGenerated,
+			Confidence:     0.50,
+		},
+		{
+			Scope:          ScopeCommon,
+			NormalizedTerm: "charlie",
+			DisplayTerm:    "Charlie",
+			TargetText:     "查理",
+			Status:         StatusActive,
+			Source:         SourceCurated,
+			Confidence:     0.10,
+		},
+		{
+			Scope:          ScopeMedia,
+			MediaKey:       mediaKey,
+			NormalizedTerm: "bravo",
+			DisplayTerm:    "Bravo",
+			TargetText:     "布拉沃",
+			Status:         StatusActive,
+			Source:         SourceGenerated,
+			Confidence:     0.90,
+		},
+		{
+			Scope:          ScopeCommon,
+			NormalizedTerm: "delta",
+			DisplayTerm:    "Delta",
+			TargetText:     "德尔塔",
+			Status:         StatusActive,
+			Source:         SourceGenerated,
+			Confidence:     0.99,
+		},
+		{
+			Scope:          ScopeMedia,
+			MediaKey:       "title:series:other",
+			NormalizedTerm: "wrong-media",
+			DisplayTerm:    "Wrong Media",
+			TargetText:     "错误媒体",
+			Status:         StatusActive,
+			Source:         SourceGenerated,
+			Confidence:     1.00,
+		},
+		{
+			Scope:          ScopeCommon,
+			NormalizedTerm: "inactive",
+			DisplayTerm:    "Inactive",
+			TargetText:     "停用",
+			Status:         StatusCandidate,
+			Source:         SourceGenerated,
+			Confidence:     1.00,
+		},
+	}
+	for i := range entries {
+		entries[i].LastSeenAt = time.Unix(int64(i), 0)
+	}
+
+	llm := &capturingLLM{}
+	svc := NewService(ServiceConfig{
+		Enabled:                 true,
+		TargetLanguage:          "zh-Hans",
+		MaxPromptEntries:        2,
+		MaxCandidates:           10,
+		MaxSnippetsPerCandidate: 1,
+		MaxSubtitleBytes:        1 << 20,
+		MaxCues:                 100,
+	}, fakeStore{entries: entries}, llm)
+
+	_, err := svc.Prepare(context.Background(), types.JobMessage{
+		JobID:        "job-existing-context",
+		MediaTitle:   "The Capture",
+		MediaType:    "series",
+		SubtitlePath: subtitlePath,
+	})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if !llm.called {
+		t.Fatal("expected LLM to be called")
+	}
+
+	var got []string
+	for _, entry := range llm.req.ExistingEntries {
+		got = append(got, entry.NormalizedTerm)
+	}
+	want := []string{"bravo", "alpha", "charlie", "delta"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("existing entries = %#v, want %#v", got, want)
 	}
 }
 

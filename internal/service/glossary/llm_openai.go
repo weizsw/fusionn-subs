@@ -83,7 +83,7 @@ func (c *OpenAICompatibleClient) GenerateGlossary(ctx context.Context, req Gener
 	if len(resp.Choices) == 0 {
 		return GenerateResponse{}, fmt.Errorf("glossary llm returned no choices")
 	}
-	return decodeGenerateResponse(resp.Choices[0].Message.Content)
+	return decodeGenerateResponse(resp.Choices[0].Message.Content, req)
 }
 
 func buildGlossaryUserPrompt(req GenerateRequest) (string, error) {
@@ -167,12 +167,12 @@ func normalizeOpenAIBaseURL(baseURL, endpoint string) string {
 	return baseURL + endpoint
 }
 
-func decodeGenerateResponse(content string) (GenerateResponse, error) {
+func decodeGenerateResponse(content string, req GenerateRequest) (GenerateResponse, error) {
 	var out GenerateResponse
 	if err := json.Unmarshal([]byte(content), &out); err != nil {
 		return GenerateResponse{}, fmt.Errorf("decode glossary llm response: %w", err)
 	}
-	if err := out.Validate(); err != nil {
+	if err := out.ValidateForRequest(req); err != nil {
 		return GenerateResponse{}, err
 	}
 	return out, nil

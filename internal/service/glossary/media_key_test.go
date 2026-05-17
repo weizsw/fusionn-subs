@@ -19,11 +19,51 @@ func TestResolveMediaKeyPrefersStableExternalID(t *testing.T) {
 	}
 }
 
+func TestResolveMediaKeyPrefersTMDBForMovies(t *testing.T) {
+	msg := types.JobMessage{
+		MediaTitle:  "Example Movie",
+		MediaType:   "movie",
+		ExternalIDs: map[string]string{externalIDTVDB: "12345", externalIDTMDB: "67890"},
+	}
+
+	key := ResolveMediaKey(msg)
+	if key.Value != "tmdb:67890" || key.Source != MediaKeySourceExternalID {
+		t.Fatalf("key = %#v", key)
+	}
+}
+
+func TestResolveMediaKeyNormalizesExternalIDKeys(t *testing.T) {
+	msg := types.JobMessage{
+		MediaTitle:  "The Capture",
+		MediaType:   "series",
+		ExternalIDs: map[string]string{"TVDB": "355620", "TMDB": "93405"},
+	}
+
+	key := ResolveMediaKey(msg)
+	if key.Value != "tvdb:355620" || key.Source != MediaKeySourceExternalID {
+		t.Fatalf("key = %#v", key)
+	}
+}
+
 func TestResolveMediaKeyUsesSourceScopedMediaID(t *testing.T) {
 	msg := types.JobMessage{
 		MediaTitle:   "The Capture",
 		MediaType:    "series",
 		MediaID:      "42",
+		SourceSystem: "sonarr",
+	}
+
+	key := ResolveMediaKey(msg)
+	if key.Value != "sonarr:42" || key.Source != MediaKeySourceMediaID {
+		t.Fatalf("key = %#v", key)
+	}
+}
+
+func TestResolveMediaKeyAvoidsDoublePrefixingMediaID(t *testing.T) {
+	msg := types.JobMessage{
+		MediaTitle:   "The Capture",
+		MediaType:    "series",
+		MediaID:      "sonarr:42",
 		SourceSystem: "sonarr",
 	}
 

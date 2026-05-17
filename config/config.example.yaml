@@ -64,6 +64,7 @@ openrouter:
 openai:
   api_key: ""                         # OpenAI API key (or use OPENAI_API_KEY)
   model: "gpt-5-mini"                 # OpenAI model for translation
+  fallback_models: []                 # Optional models to try before switching providers
   api_base: ""                        # Optional custom OpenAI-compatible API base
   use_httpx: false                    # Only valid when api_base is set
   instruction: ""                     # Custom translation instruction (optional)

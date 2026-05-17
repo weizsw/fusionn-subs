@@ -185,6 +185,69 @@ func TestOpenAIProviderValidatesConfig(t *testing.T) {
 	}
 }
 
+func TestOpenAIProviderNormalizesFallbackModels(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	cfg := validConfigForTest()
+	cfg.Gemini.APIKey = ""
+	cfg.Translator.Providers = []string{"openai"}
+	cfg.OpenAI = OpenAIConfig{
+		APIKey:         "openai-key",
+		Model:          "gpt-5-mini",
+		FallbackModels: []string{" gpt-5-nano ", "gpt-4.1-mini"},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	want := []string{"gpt-5-nano", "gpt-4.1-mini"}
+	if !reflect.DeepEqual(cfg.OpenAI.FallbackModels, want) {
+		t.Fatalf("fallback models = %#v, want %#v", cfg.OpenAI.FallbackModels, want)
+	}
+}
+
+func TestOpenAIProviderRejectsInvalidFallbackModels(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	tests := []struct {
+		name           string
+		fallbackModels []string
+		wantErr        string
+	}{
+		{
+			name:           "blank",
+			fallbackModels: []string{"gpt-5-nano", " "},
+			wantErr:        "openai.fallback_models[1] is empty",
+		},
+		{
+			name:           "duplicates primary",
+			fallbackModels: []string{"gpt-5-mini"},
+			wantErr:        "openai.fallback_models[0] duplicates openai.model",
+		},
+		{
+			name:           "duplicates fallback",
+			fallbackModels: []string{"gpt-5-nano", "gpt-5-nano"},
+			wantErr:        "openai.fallback_models[1] duplicates",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfigForTest()
+			cfg.Gemini.APIKey = ""
+			cfg.Translator.Providers = []string{"openai"}
+			cfg.OpenAI = OpenAIConfig{
+				APIKey:         "openai-key",
+				Model:          "gpt-5-mini",
+				FallbackModels: tt.fallbackModels,
+			}
+
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
 func TestOpenAIProviderUsesEnvironmentAPIKeyFallback(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "env-openai-key")
 	cfg := validConfigForTest()
@@ -435,30 +498,32 @@ func TestSafeLogValuesIncludesAllGlossaryValues(t *testing.T) {
 func TestSafeLogValuesIncludesOpenAIValues(t *testing.T) {
 	cfg := validConfigForTest()
 	cfg.OpenAI = OpenAIConfig{
-		APIKey:       "openai-secret",
-		Model:        "gpt-5-mini",
-		APIBase:      "https://example.openai.local/v1",
-		UseHTTPX:     true,
-		Instruction:  "Keep tone natural.",
-		RateLimit:    12,
-		MaxBatchSize: 18,
-		Timeout:      45 * time.Minute,
+		APIKey:         "openai-secret",
+		Model:          "gpt-5-mini",
+		FallbackModels: []string{"gpt-5-nano", "gpt-4.1-mini"},
+		APIBase:        "https://example.openai.local/v1",
+		UseHTTPX:       true,
+		Instruction:    "Keep tone natural.",
+		RateLimit:      12,
+		MaxBatchSize:   18,
+		Timeout:        45 * time.Minute,
 	}
 
 	values := cfg.SafeLogValues()
 	want := map[string]any{
-		"openai.api_key":        util.MaskSecret(cfg.OpenAI.APIKey),
-		"openai.model":          cfg.OpenAI.Model,
-		"openai.api_base":       cfg.OpenAI.APIBase,
-		"openai.use_httpx":      cfg.OpenAI.UseHTTPX,
-		"openai.instruction":    cfg.OpenAI.Instruction,
-		"openai.rate_limit":     cfg.OpenAI.RateLimit,
-		"openai.max_batch_size": cfg.OpenAI.MaxBatchSize,
-		"openai.timeout":        cfg.OpenAI.Timeout.String(),
+		"openai.api_key":         util.MaskSecret(cfg.OpenAI.APIKey),
+		"openai.model":           cfg.OpenAI.Model,
+		"openai.fallback_models": cfg.OpenAI.FallbackModels,
+		"openai.api_base":        cfg.OpenAI.APIBase,
+		"openai.use_httpx":       cfg.OpenAI.UseHTTPX,
+		"openai.instruction":     cfg.OpenAI.Instruction,
+		"openai.rate_limit":      cfg.OpenAI.RateLimit,
+		"openai.max_batch_size":  cfg.OpenAI.MaxBatchSize,
+		"openai.timeout":         cfg.OpenAI.Timeout.String(),
 	}
 
 	for key, wantValue := range want {
-		if got := values[key]; got != wantValue {
+		if got := values[key]; !reflect.DeepEqual(got, wantValue) {
 			t.Fatalf("%s = %#v, want %#v", key, got, wantValue)
 		}
 	}

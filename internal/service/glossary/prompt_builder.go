@@ -51,6 +51,38 @@ func BuildTerminology(entries []PromptEntry, opts PromptOptions) []Terminology {
 	return terminology
 }
 
+func SelectExistingEntries(entries []PromptEntry, opts PromptOptions) []PromptEntry {
+	if opts.MaxPromptEntries <= 0 {
+		return nil
+	}
+
+	winners := make(map[string]PromptEntry)
+	for _, entry := range entries {
+		if !isExistingContextEligible(entry, opts) {
+			continue
+		}
+		term := strings.TrimSpace(entry.NormalizedTerm)
+		current, ok := winners[term]
+		if !ok || promptRank(entry, opts.MediaKey) > promptRank(current, opts.MediaKey) {
+			winners[term] = entry
+		}
+	}
+
+	selected := make([]PromptEntry, 0, len(winners))
+	for _, entry := range winners {
+		selected = append(selected, entry)
+	}
+	sort.SliceStable(selected, func(i, j int) bool {
+		return promptRank(selected[i], opts.MediaKey) > promptRank(selected[j], opts.MediaKey)
+	})
+
+	limit := opts.MaxPromptEntries * 2
+	if len(selected) > limit {
+		selected = selected[:limit]
+	}
+	return selected
+}
+
 func isPromptEligible(entry PromptEntry, opts PromptOptions) bool {
 	if entry.Status != StatusActive {
 		return false
@@ -65,6 +97,19 @@ func isPromptEligible(entry PromptEntry, opts PromptOptions) bool {
 		return false
 	}
 	if entry.Confidence < opts.InjectMinConfidence && entry.Source != SourceCurated {
+		return false
+	}
+	if entry.Scope == ScopeMedia && entry.MediaKey != opts.MediaKey {
+		return false
+	}
+	return entry.Scope == ScopeMedia || entry.Scope == ScopeCommon
+}
+
+func isExistingContextEligible(entry PromptEntry, opts PromptOptions) bool {
+	if entry.Status != StatusActive {
+		return false
+	}
+	if strings.TrimSpace(entry.NormalizedTerm) == "" || strings.TrimSpace(entry.TargetText) == "" {
 		return false
 	}
 	if entry.Scope == ScopeMedia && entry.MediaKey != opts.MediaKey {

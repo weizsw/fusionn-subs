@@ -78,6 +78,13 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (Payload, e
 		}
 		return currentPayload(), nil
 	}
+	if len(candidates) == 0 {
+		logger.Infof("Glossary LLM generation skipped: job_id=%s media_key=%s no candidates found", msg.JobID, mediaKey.Value)
+		if err := s.recordCompleted(ctx, msg, mediaKey.Value); err != nil {
+			return Payload{}, err
+		}
+		return currentPayload(), nil
+	}
 
 	if s.llm == nil {
 		logger.Warn("glossary LLM generation skipped: no client configured")
@@ -94,13 +101,18 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (Payload, e
 	}
 	defer cancel()
 
-	logger.Infof("Glossary LLM generation started: job_id=%s media_key=%s target_language=%s candidates=%d existing_entries=%d", msg.JobID, mediaKey.Value, s.cfg.TargetLanguage, len(candidates), len(entries))
+	existingEntries := SelectExistingEntries(entries, PromptOptions{
+		MediaKey:         mediaKey.Value,
+		MaxPromptEntries: s.cfg.MaxPromptEntries,
+	})
+
+	logger.Infof("Glossary LLM generation started: job_id=%s media_key=%s target_language=%s candidates=%d existing_entries=%d", msg.JobID, mediaKey.Value, s.cfg.TargetLanguage, len(candidates), len(existingEntries))
 	llmStartedAt := time.Now()
 	resp, err := s.llm.GenerateGlossary(llmCtx, GenerateRequest{
 		Job:             msg,
 		MediaKey:        mediaKey.Value,
 		TargetLanguage:  s.cfg.TargetLanguage,
-		ExistingEntries: entries,
+		ExistingEntries: existingEntries,
 		Candidates:      candidates,
 	})
 	llmDuration := time.Since(llmStartedAt).Round(time.Millisecond)

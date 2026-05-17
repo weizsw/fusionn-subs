@@ -85,6 +85,7 @@ translator:
 openai:
   api_key: ""                          # Or set OPENAI_API_KEY
   model: "gpt-5-mini"
+  fallback_models: ["gpt-5-nano"]       # Tried before moving to the next provider
   api_base: ""                         # Optional custom instance
   use_httpx: false                     # Requires api_base
   instruction: ""
@@ -97,6 +98,8 @@ openai:
 When `glossary.enabled` is true, fusionn-subs scans each subtitle locally, extracts terminology candidates, asks the configured glossary LLM for Chinese-oriented glossary entries, stores them in SQLite, and passes selected entries to llm-subtrans as repeatable `--terminology SOURCE::TRANSLATION` arguments. It also enables llm-subtrans's `--build-terminology-map` for that job so terms remain consistent across batches.
 
 Glossary extraction and LLM failures do not block translation; existing glossary entries may still be passed to translation. SQLite open, migration, corruption, or transaction failures are treated as service/job failures because persistence is not trustworthy.
+
+Glossary media keys prefer stable external IDs. Series and episodes use `tvdb` before `tmdb`/`imdb`; movies use `tmdb` before `imdb`/`tvdb`. Sonarr/Radarr IDs, title keys, and path hashes are fallbacks when stable IDs are unavailable.
 
 ```yaml
 glossary:

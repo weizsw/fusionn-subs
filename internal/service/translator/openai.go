@@ -20,6 +20,7 @@ type OpenAITranslator struct {
 	mu             sync.RWMutex
 	apiKey         string
 	model          string
+	fallbackModels []string
 	apiBase        string
 	useHTTPX       bool
 	instruction    string
@@ -33,6 +34,7 @@ type OpenAITranslator struct {
 type openAISnapshot struct {
 	apiKey         string
 	model          string
+	fallbackModels []string
 	apiBase        string
 	useHTTPX       bool
 	instruction    string
@@ -68,6 +70,7 @@ func NewOpenAITranslator(cfg config.OpenAIConfig, targetLang, outputSuffix strin
 		workDir:        workDir,
 		apiKey:         cfg.APIKey,
 		model:          cfg.Model,
+		fallbackModels: append([]string(nil), cfg.FallbackModels...),
 		apiBase:        cfg.APIBase,
 		useHTTPX:       cfg.UseHTTPX,
 		instruction:    cfg.Instruction,
@@ -88,30 +91,40 @@ func (t *OpenAITranslator) Translate(ctx context.Context, req Request) (string, 
 	snapshot := t.snapshot()
 	outputPath := msg.OutputPath(snapshot.outputSuffix)
 
-	ctxTimeout, cancel := context.WithTimeout(ctx, snapshot.timeout)
-	defer cancel()
+	var lastErr error
+	for _, model := range openAIModelAttempts(snapshot) {
+		attempt := snapshot
+		attempt.model = model
 
-	args := buildOpenAIArgs(req, outputPath, snapshot)
-	cmd := exec.CommandContext(ctxTimeout, t.scriptPath, args...)
-	if t.workDir != "" {
-		cmd.Dir = t.workDir
-	}
+		ctxTimeout, cancel := context.WithTimeout(ctx, attempt.timeout)
+		args := buildOpenAIArgs(req, outputPath, attempt)
+		cmd := exec.CommandContext(ctxTimeout, t.scriptPath, args...)
+		if t.workDir != "" {
+			cmd.Dir = t.workDir
+		}
 
-	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
-	if strings.TrimSpace(snapshot.apiKey) != "" {
-		cmd.Env = append(cmd.Env, "OPENAI_API_KEY="+snapshot.apiKey)
-	}
+		cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
+		if strings.TrimSpace(attempt.apiKey) != "" {
+			cmd.Env = append(cmd.Env, "OPENAI_API_KEY="+attempt.apiKey)
+		}
 
-	logger.Infof("🔄 Starting translation (OpenAI): %s → %s", msg.SubtitlePath, outputPath)
-	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
+		logger.Infof("🔄 Starting translation (OpenAI/%s): %s → %s", model, msg.SubtitlePath, outputPath)
+		logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
 
-	resultPath, _, err := executeScript(cmd, outputPath)
-	if err != nil {
+		resultPath, _, err := executeScript(cmd, outputPath)
+		cancel()
+		if err == nil {
+			return resultPath, nil
+		}
+		lastErr = err
 		os.Remove(outputPath)
-		return "", err
+		logger.Warnf("OpenAI model failed: model=%s error=%v", model, err)
 	}
 
-	return resultPath, nil
+	if lastErr == nil {
+		return "", fmt.Errorf("openai model is required")
+	}
+	return "", fmt.Errorf("openai models failed: %w", lastErr)
 }
 
 func (t *OpenAITranslator) buildArgs(req Request, outputPath string) []string {
@@ -125,6 +138,7 @@ func (t *OpenAITranslator) snapshot() openAISnapshot {
 	return openAISnapshot{
 		apiKey:         t.apiKey,
 		model:          t.model,
+		fallbackModels: append([]string(nil), t.fallbackModels...),
 		apiBase:        t.apiBase,
 		useHTTPX:       t.useHTTPX,
 		instruction:    t.instruction,
@@ -192,6 +206,7 @@ func (t *OpenAITranslator) UpdateFromConfig(cfg *config.Config) {
 
 	t.apiKey = openAICfg.APIKey
 	t.model = openAICfg.Model
+	t.fallbackModels = append([]string(nil), openAICfg.FallbackModels...)
 	t.apiBase = openAICfg.APIBase
 	t.useHTTPX = openAICfg.UseHTTPX
 	t.instruction = openAICfg.Instruction
@@ -200,4 +215,13 @@ func (t *OpenAITranslator) UpdateFromConfig(cfg *config.Config) {
 	t.timeout = timeout
 
 	logger.Infof("🔄 OpenAI config reloaded: model=%s", t.model)
+}
+
+func openAIModelAttempts(snapshot openAISnapshot) []string {
+	models := make([]string, 0, 1+len(snapshot.fallbackModels))
+	if strings.TrimSpace(snapshot.model) != "" {
+		models = append(models, snapshot.model)
+	}
+	models = append(models, snapshot.fallbackModels...)
+	return models
 }
