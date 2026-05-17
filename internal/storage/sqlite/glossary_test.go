@@ -46,6 +46,7 @@ func TestGlossaryStoreUpsertMergesSameTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
+	req.Job = types.JobMessage{JobID: "job-2", SubtitlePath: "/tmp/e2.srt"}
 	second, err := store.UpsertGeneratedEntries(ctx, req)
 	if err != nil {
 		t.Fatalf("second upsert: %v", err)
@@ -60,6 +61,60 @@ func TestGlossaryStoreUpsertMergesSameTarget(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].EvidenceCount != 2 {
 		t.Fatalf("entries = %#v", entries)
+	}
+}
+
+func TestGlossaryStoreDoesNotDuplicateObservationForSameSubtitle(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "glossary.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	store := NewGlossaryStore(db)
+	req := glossary.UpsertRequest{
+		Job:            types.JobMessage{JobID: "job-1", SubtitlePath: "/tmp/e1.srt"},
+		MediaKey:       "tvdb:355620",
+		TargetLanguage: "zh-Hans",
+		Options: glossary.UpsertOptions{
+			MinConfidence:             0.75,
+			MaxActiveVariantsPerTerm:  3,
+			MaxObservationsPerVariant: 10,
+		},
+		Entries: []glossary.GeneratedEntry{{
+			SourceTerm:      "SO15",
+			NormalizedTerm:  "so15",
+			TargetText:      "SO15",
+			Definition:      "counter terrorism command",
+			TranslationMode: glossary.TranslationModePreserve,
+			Category:        glossary.CategoryOrganization,
+			Confidence:      0.91,
+			Evidence:        []string{"SO15 asked DCI Carey."},
+		}},
+	}
+	if _, err := store.UpsertGeneratedEntries(ctx, req); err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+	req.Job.JobID = "job-retry"
+	if _, err := store.UpsertGeneratedEntries(ctx, req); err != nil {
+		t.Fatalf("retry upsert: %v", err)
+	}
+
+	entries, err := store.LoadPromptEntries(ctx, "tvdb:355620", "zh-Hans")
+	if err != nil {
+		t.Fatalf("load prompt entries: %v", err)
+	}
+	if len(entries) != 1 || entries[0].EvidenceCount != 1 {
+		t.Fatalf("entries = %#v, want one evidence observation", entries)
+	}
+
+	var observations int
+	if err := db.QueryRowContext(ctx, `select count(*) from glossary_observations`).Scan(&observations); err != nil {
+		t.Fatalf("count observations: %v", err)
+	}
+	if observations != 1 {
+		t.Fatalf("observations = %d, want 1", observations)
 	}
 }
 
@@ -114,6 +169,127 @@ func TestGlossaryStoreSuppressesExcessActiveVariants(t *testing.T) {
 		t.Fatalf("load prompt entries: %v", err)
 	}
 	if len(entries) != 1 || entries[0].TargetText != "SO15" {
+		t.Fatalf("entries = %#v", entries)
+	}
+}
+
+func TestGlossaryStorePromotesCandidateVariantWhenConfidenceImproves(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "glossary.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	store := NewGlossaryStore(db)
+	req := glossary.UpsertRequest{
+		Job:            types.JobMessage{JobID: "job-1", SubtitlePath: "/tmp/e1.srt"},
+		MediaKey:       "tvdb:355620",
+		TargetLanguage: "zh-Hans",
+		Options: glossary.UpsertOptions{
+			MinConfidence:             0.75,
+			MaxActiveVariantsPerTerm:  3,
+			MaxObservationsPerVariant: 10,
+		},
+		Entries: []glossary.GeneratedEntry{{
+			SourceTerm:      "SO15",
+			NormalizedTerm:  "so15",
+			TargetText:      "SO15",
+			Definition:      "counter terrorism command",
+			TranslationMode: glossary.TranslationModePreserve,
+			Category:        glossary.CategoryOrganization,
+			Confidence:      0.60,
+		}},
+	}
+	if _, err := store.UpsertGeneratedEntries(ctx, req); err != nil {
+		t.Fatalf("low-confidence upsert: %v", err)
+	}
+
+	entries, err := store.LoadPromptEntries(ctx, "tvdb:355620", "zh-Hans")
+	if err != nil {
+		t.Fatalf("load after low-confidence upsert: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("low-confidence entries = %#v, want none", entries)
+	}
+
+	req.Job.JobID = "job-2"
+	req.Entries[0].Confidence = 0.92
+	if _, err := store.UpsertGeneratedEntries(ctx, req); err != nil {
+		t.Fatalf("high-confidence upsert: %v", err)
+	}
+
+	entries, err = store.LoadPromptEntries(ctx, "tvdb:355620", "zh-Hans")
+	if err != nil {
+		t.Fatalf("load after high-confidence upsert: %v", err)
+	}
+	if len(entries) != 1 || entries[0].TargetText != "SO15" || entries[0].Status != glossary.StatusActive {
+		t.Fatalf("entries = %#v", entries)
+	}
+}
+
+func TestGlossaryStoreReactivatesSuppressedVariantWhenItBecomesBest(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "glossary.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	store := NewGlossaryStore(db)
+	req := glossary.UpsertRequest{
+		Job:            types.JobMessage{JobID: "job-1", SubtitlePath: "/tmp/e1.srt"},
+		MediaKey:       "tvdb:355620",
+		TargetLanguage: "zh-Hans",
+		Options: glossary.UpsertOptions{
+			MinConfidence:             0.75,
+			MaxActiveVariantsPerTerm:  1,
+			MaxObservationsPerVariant: 10,
+		},
+		Entries: []glossary.GeneratedEntry{
+			{
+				SourceTerm:      "SO15",
+				NormalizedTerm:  "so15",
+				TargetText:      "反恐指挥部",
+				Definition:      "translated form",
+				TranslationMode: glossary.TranslationModeTranslate,
+				Category:        glossary.CategoryOrganization,
+				Confidence:      0.80,
+			},
+			{
+				SourceTerm:      "SO15",
+				NormalizedTerm:  "so15",
+				TargetText:      "SO15",
+				Definition:      "preserved acronym",
+				TranslationMode: glossary.TranslationModePreserve,
+				Category:        glossary.CategoryOrganization,
+				Confidence:      0.95,
+			},
+		},
+	}
+	if _, err := store.UpsertGeneratedEntries(ctx, req); err != nil {
+		t.Fatalf("initial upsert: %v", err)
+	}
+
+	req.Job.JobID = "job-2"
+	req.Entries = []glossary.GeneratedEntry{{
+		SourceTerm:      "SO15",
+		NormalizedTerm:  "so15",
+		TargetText:      "反恐指挥部",
+		Definition:      "translated form",
+		TranslationMode: glossary.TranslationModeTranslate,
+		Category:        glossary.CategoryOrganization,
+		Confidence:      0.99,
+	}}
+	if _, err := store.UpsertGeneratedEntries(ctx, req); err != nil {
+		t.Fatalf("reactivating upsert: %v", err)
+	}
+
+	entries, err := store.LoadPromptEntries(ctx, "tvdb:355620", "zh-Hans")
+	if err != nil {
+		t.Fatalf("load prompt entries: %v", err)
+	}
+	if len(entries) != 1 || entries[0].TargetText != "反恐指挥部" || entries[0].Status != glossary.StatusActive {
 		t.Fatalf("entries = %#v", entries)
 	}
 }

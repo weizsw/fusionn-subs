@@ -100,20 +100,33 @@ func (s *GlossaryStore) UpsertGeneratedEntries(ctx context.Context, req glossary
 		}
 
 		var variantID int64
+		var mergedVariant bool
 		err = tx.QueryRowContext(ctx, `
 select id from glossary_variants
 where term_id = ? and target_language = ? and lower(target_text) = lower(?)
 limit 1`, termID, targetLanguage, entry.TargetText).Scan(&variantID)
 		switch {
 		case err == nil:
+			mergedVariant = true
 			_, err = tx.ExecContext(ctx, `
 update glossary_variants
 set confidence = max(confidence, ?),
-    evidence_count = evidence_count + 1,
+    status = case when max(confidence, ?) >= ? then ? else ? end,
     definition = case when length(definition) >= length(?) then definition else ? end,
     updated_at = ?,
     last_seen_at = ?
-where id = ?`, entry.Confidence, entry.Definition, entry.Definition, now, now, variantID)
+where id = ?`,
+				entry.Confidence,
+				entry.Confidence,
+				req.Options.MinConfidence,
+				glossary.StatusActive,
+				glossary.StatusCandidate,
+				entry.Definition,
+				entry.Definition,
+				now,
+				now,
+				variantID,
+			)
 			if err != nil {
 				return result, fmt.Errorf("merge glossary variant: %w", err)
 			}
@@ -146,8 +159,17 @@ values (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
 			return result, fmt.Errorf("find glossary variant: %w", err)
 		}
 
-		if err := insertObservation(ctx, tx, variantID, req, entry, now); err != nil {
+		insertedObservation, err := insertObservation(ctx, tx, variantID, req, entry, now)
+		if err != nil {
 			return result, err
+		}
+		if insertedObservation && mergedVariant {
+			if _, err := tx.ExecContext(ctx, `
+update glossary_variants
+set evidence_count = evidence_count + 1
+where id = ?`, variantID); err != nil {
+				return result, fmt.Errorf("increment glossary evidence count: %w", err)
+			}
 		}
 		suppressed, err := suppressExcessActiveVariants(ctx, tx, termID, targetLanguage, req.Options.MaxActiveVariantsPerTerm, now)
 		if err != nil {
@@ -306,13 +328,27 @@ values (?, ?, ?, ?, ?, ?, ?)`, glossary.ScopeMedia, mediaKey, normalized, displa
 	}
 }
 
-func insertObservation(ctx context.Context, tx *sql.Tx, variantID int64, req glossary.UpsertRequest, entry glossary.GeneratedEntry, now string) error {
+func insertObservation(ctx context.Context, tx *sql.Tx, variantID int64, req glossary.UpsertRequest, entry glossary.GeneratedEntry, now string) (bool, error) {
 	snippet := ""
 	if len(entry.Evidence) > 0 {
 		snippet = entry.Evidence[0]
 	}
 	subtitleHash := glossary.SubtitlePathHash(req.Job.SubtitlePath)
-	_, err := tx.ExecContext(ctx, `
+
+	var existingID int64
+	err := tx.QueryRowContext(ctx, `
+select id from glossary_observations
+where variant_id = ? and subtitle_path_hash = ?
+limit 1`, variantID, subtitleHash).Scan(&existingID)
+	switch {
+	case err == nil:
+		return false, nil
+	case errors.Is(err, sql.ErrNoRows):
+	default:
+		return false, fmt.Errorf("find glossary observation: %w", err)
+	}
+
+	_, err = tx.ExecContext(ctx, `
 insert into glossary_observations(variant_id, job_id, media_key, subtitle_path_hash, season, episode, snippet, confidence, created_at)
 values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		variantID,
@@ -326,7 +362,7 @@ values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		now,
 	)
 	if err != nil {
-		return fmt.Errorf("insert glossary observation: %w", err)
+		return false, fmt.Errorf("insert glossary observation: %w", err)
 	}
 
 	if req.Options.MaxObservationsPerVariant > 0 {
@@ -341,10 +377,10 @@ where variant_id = ?
     limit ?
   )`, variantID, variantID, req.Options.MaxObservationsPerVariant)
 		if err != nil {
-			return fmt.Errorf("trim glossary observations: %w", err)
+			return false, fmt.Errorf("trim glossary observations: %w", err)
 		}
 	}
-	return nil
+	return true, nil
 }
 
 func suppressExcessActiveVariants(ctx context.Context, tx *sql.Tx, termID int64, targetLanguage string, maxActive int, now string) (int, error) {

@@ -13,10 +13,10 @@ import (
 var nonKeyChars = regexp.MustCompile(`[^a-z0-9]+`)
 
 func ResolveMediaKey(msg types.JobMessage) MediaKey {
-	for _, key := range []string{externalIDTVDB, externalIDTMDB, externalIDIMDB} {
-		if value := strings.TrimSpace(msg.ExternalIDs[key]); value != "" {
+	for _, key := range stableExternalIDPriority(msg.MediaType) {
+		if value := externalIDValue(msg.ExternalIDs, key); value != "" {
 			return MediaKey{
-				Value:  key + ":" + strings.ToLower(value),
+				Value:  key + ":" + value,
 				Source: MediaKeySourceExternalID,
 			}
 		}
@@ -28,12 +28,13 @@ func ResolveMediaKey(msg types.JobMessage) MediaKey {
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if key != externalIDSonarr && key != externalIDRadarr {
+		normalizedKey := strings.ToLower(strings.TrimSpace(key))
+		if normalizedKey != externalIDSonarr && normalizedKey != externalIDRadarr {
 			continue
 		}
 		if value := strings.TrimSpace(msg.ExternalIDs[key]); value != "" {
 			return MediaKey{
-				Value:  key + ":" + strings.ToLower(value),
+				Value:  normalizedKey + ":" + strings.ToLower(value),
 				Source: MediaKeySourceExternalID,
 			}
 		}
@@ -45,7 +46,7 @@ func ResolveMediaKey(msg types.JobMessage) MediaKey {
 			source = defaultMediaIDSource
 		}
 		return MediaKey{
-			Value:  source + ":" + strings.ToLower(mediaID),
+			Value:  scopedMediaID(source, mediaID),
 			Source: MediaKeySourceMediaID,
 		}
 	}
@@ -66,6 +67,36 @@ func ResolveMediaKey(msg types.JobMessage) MediaKey {
 		Value:  "path:" + hex.EncodeToString(sum[:8]),
 		Source: MediaKeySourcePath,
 	}
+}
+
+func stableExternalIDPriority(mediaType string) []string {
+	switch normalizeKeyPart(mediaType) {
+	case "movie":
+		return []string{externalIDTMDB, externalIDIMDB, externalIDTVDB}
+	default:
+		return []string{externalIDTVDB, externalIDTMDB, externalIDIMDB}
+	}
+}
+
+func externalIDValue(ids map[string]string, wantKey string) string {
+	for key, value := range ids {
+		if strings.EqualFold(strings.TrimSpace(key), wantKey) {
+			return strings.ToLower(strings.TrimSpace(value))
+		}
+	}
+	return ""
+}
+
+func scopedMediaID(source, mediaID string) string {
+	mediaID = strings.ToLower(strings.TrimSpace(mediaID))
+	if prefix, value, ok := strings.Cut(mediaID, ":"); ok {
+		prefix = normalizeKeyPart(prefix)
+		value = strings.TrimSpace(value)
+		if prefix != "" && value != "" {
+			return prefix + ":" + value
+		}
+	}
+	return source + ":" + mediaID
 }
 
 func normalizeKeyPart(value string) string {

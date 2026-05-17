@@ -91,6 +91,72 @@ func TestGenerateResponseValidateRejectsInvalidConfidence(t *testing.T) {
 	}
 }
 
+func TestGenerateResponseValidateForRequestRejectsUnknownCandidate(t *testing.T) {
+	err := (GenerateResponse{Entries: []GeneratedEntry{{
+		SourceTerm:      "MI6",
+		NormalizedTerm:  "mi6",
+		TargetLanguage:  "zh-Hans",
+		TargetText:      "MI6",
+		TranslationMode: TranslationModePreserve,
+		Category:        CategoryOrganization,
+		Confidence:      0.92,
+	}}}).ValidateForRequest(GenerateRequest{
+		TargetLanguage: "zh-Hans",
+		Candidates: []Candidate{{
+			Term:           "SO15",
+			NormalizedTerm: "so15",
+		}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "candidate") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestGenerateResponseValidateForRequestRejectsInvalidSchemaValues(t *testing.T) {
+	req := GenerateRequest{
+		TargetLanguage: "zh-Hans",
+		Candidates: []Candidate{{
+			Term:           "SO15",
+			NormalizedTerm: "so15",
+		}},
+	}
+
+	for name, entry := range map[string]GeneratedEntry{
+		"target language": {
+			SourceTerm:      "SO15",
+			NormalizedTerm:  "so15",
+			TargetLanguage:  "Chinese",
+			TargetText:      "SO15",
+			TranslationMode: TranslationModePreserve,
+			Category:        CategoryOrganization,
+			Confidence:      0.92,
+		},
+		"translation mode": {
+			SourceTerm:      "SO15",
+			NormalizedTerm:  "so15",
+			TargetLanguage:  "zh-Hans",
+			TargetText:      "SO15",
+			TranslationMode: "fixed",
+			Category:        CategoryOrganization,
+			Confidence:      0.92,
+		},
+		"category": {
+			SourceTerm:      "SO15",
+			NormalizedTerm:  "so15",
+			TargetLanguage:  "zh-Hans",
+			TargetText:      "SO15",
+			TranslationMode: TranslationModePreserve,
+			Category:        "unit",
+			Confidence:      0.92,
+		},
+	} {
+		err := (GenerateResponse{Entries: []GeneratedEntry{entry}}).ValidateForRequest(req)
+		if err == nil {
+			t.Fatalf("%s: expected validation error", name)
+		}
+	}
+}
+
 func TestGlossaryPromptUsesResponseSchemaAndCandidateFieldNames(t *testing.T) {
 	if !strings.Contains(glossarySystemPrompt, "source_term") {
 		t.Fatalf("system prompt = %q, missing source_term response schema", glossarySystemPrompt)

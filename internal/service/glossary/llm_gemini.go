@@ -39,5 +39,5 @@ func (c *GeminiClient) GenerateGlossary(ctx context.Context, req GenerateRequest
 	if err != nil {
 		return GenerateResponse{}, fmt.Errorf("call gemini glossary llm: %w", err)
 	}
-	return decodeGenerateResponse(resp.Text())
+	return decodeGenerateResponse(resp.Text(), req)
 }
