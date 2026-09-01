@@ -24,7 +24,8 @@ ENV LLM_SUBTRANS_DIR=/opt/llm-subtrans \
 
 RUN apt-get update && apt-get install -y --no-install-recommends git build-essential tzdata && rm -rf /var/lib/apt/lists/*
 
-RUN git clone --depth 1 https://github.com/machinewrapped/llm-subtrans.git ${LLM_SUBTRANS_DIR}
+ARG VERSION=dev
+RUN echo "Fetching llm-subtrans for fusionn-subs ${VERSION}" && git clone --depth 1 https://github.com/machinewrapped/llm-subtrans.git ${LLM_SUBTRANS_DIR}
 
 WORKDIR ${LLM_SUBTRANS_DIR}
 
