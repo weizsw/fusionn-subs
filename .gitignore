@@ -44,3 +44,5 @@ build/
 # Env files
 *.local
 *.env
+.codegraph/
+.cursor/
