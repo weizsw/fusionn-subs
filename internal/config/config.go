@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"reflect"
@@ -9,10 +10,13 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
+	"go.uber.org/zap"
 
 	"github.com/fusionn-subs/internal/util"
 	"github.com/fusionn-subs/pkg/logger"
 )
+
+var log = logger.Component("config")
 
 // Service-level defaults (not user-configurable)
 const (
@@ -206,7 +210,10 @@ func NewManager(path string) (*Manager, error) {
 	// Start polling for config changes
 	go m.pollForChanges(10 * time.Second)
 
-	logger.Infof("📋 Config loaded (polling every 10s for changes)")
+	log.Info(context.Background(), "config_loaded", "Config loaded",
+		zap.String("config_path", path),
+		zap.Int64("poll_interval_ms", (10*time.Second).Milliseconds()),
+	)
 
 	return m, nil
 }
@@ -250,10 +257,15 @@ func (m *Manager) pollForChanges(interval time.Duration) {
 			m.mu.RUnlock()
 
 			if stat.ModTime().After(lastMod) {
-				logger.Infof("🔄 Config file changed, reloading...")
+				log.Info(context.Background(), "config_reload_detected", "Config file changed",
+					zap.String("config_path", m.path),
+				)
 
 				if err := viper.ReadInConfig(); err != nil {
-					logger.Errorf("❌ Failed to re-read config: %v", err)
+					log.Error(context.Background(), "config_reload_failed", "Config re-read failed",
+						zap.String("config_path", m.path),
+						zap.Error(err),
+					)
 					continue
 				}
 
@@ -271,12 +283,18 @@ func (m *Manager) pollForChanges(interval time.Duration) {
 func (m *Manager) reload() {
 	var newCfg Config
 	if err := viper.Unmarshal(&newCfg); err != nil {
-		logger.Errorf("❌ Failed to reload config: %v", err)
+		log.Error(context.Background(), "config_reload_failed", "Config unmarshal failed",
+			zap.String("config_path", m.path),
+			zap.Error(err),
+		)
 		return
 	}
 
 	if err := newCfg.Validate(); err != nil {
-		logger.Errorf("❌ Invalid config after reload: %v", err)
+		log.Error(context.Background(), "config_reload_failed", "Config validation failed after reload",
+			zap.String("config_path", m.path),
+			zap.Error(err),
+		)
 		return
 	}
 
@@ -621,23 +639,73 @@ func (c *Config) Validate() error {
 	return c.validateGlossary()
 }
 
-// logChanges logs field-level differences between old and new config.
+type configFieldChange struct {
+	name      string
+	oldValue  string
+	newValue  string
+	withValue bool
+}
+
+// IsOpaqueLogField reports config fields whose values must not be logged raw:
+// URLs may embed credentials and instruction fields carry prompt text.
+func IsOpaqueLogField(fieldPath string) bool {
+	leaf := fieldPath
+	if idx := strings.LastIndex(fieldPath, "."); idx >= 0 {
+		leaf = fieldPath[idx+1:]
+	}
+	leaf = strings.ToLower(leaf)
+	for _, fragment := range []string{"url", "base", "instruction"} {
+		if strings.Contains(leaf, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+// logChanges logs which config fields changed. Field names go to INFO; values
+// only go to DEBUG, masked for secrets and omitted for opaque fields.
 func logChanges(old, cur any, prefix string) {
+	changes := collectChanges(old, cur, prefix)
+	if len(changes) == 0 {
+		return
+	}
+
+	names := make([]string, 0, len(changes))
+	for _, change := range changes {
+		names = append(names, change.name)
+	}
+	log.Info(context.Background(), "config_reloaded", "Config reloaded",
+		zap.String("changed_fields", strings.Join(names, ",")),
+	)
+
+	for _, change := range changes {
+		if !change.withValue {
+			continue
+		}
+		log.Debug(context.Background(), "config_field_changed", "Config field changed",
+			zap.String("field", change.name),
+			zap.String("old", change.oldValue),
+			zap.String("new", change.newValue),
+		)
+	}
+}
+func collectChanges(old, cur any, prefix string) []configFieldChange {
 	oldVal := reflect.ValueOf(old)
 	newVal := reflect.ValueOf(cur)
 
 	// Dereference pointers
-	if oldVal.Kind() == reflect.Ptr {
+	if oldVal.Kind() == reflect.Pointer {
 		oldVal = oldVal.Elem()
 	}
-	if newVal.Kind() == reflect.Ptr {
+	if newVal.Kind() == reflect.Pointer {
 		newVal = newVal.Elem()
 	}
 
 	if oldVal.Kind() != reflect.Struct {
-		return
+		return nil
 	}
 
+	var changes []configFieldChange
 	t := oldVal.Type()
 	for i := range t.NumField() {
 		field := t.Field(i)
@@ -651,17 +719,24 @@ func logChanges(old, cur any, prefix string) {
 
 		// Recurse into nested structs
 		if oldField.Kind() == reflect.Struct {
-			logChanges(oldField.Interface(), newField.Interface(), fieldName)
+			changes = append(changes, collectChanges(oldField.Interface(), newField.Interface(), fieldName)...)
 			continue
 		}
 
 		// Compare values
-		if !reflect.DeepEqual(oldField.Interface(), newField.Interface()) {
-			oldStr := formatLogChangeValue(fieldName, oldField)
-			newStr := formatLogChangeValue(fieldName, newField)
-			logger.Infof("  📝 %s: %s → %s", fieldName, oldStr, newStr)
+		if reflect.DeepEqual(oldField.Interface(), newField.Interface()) {
+			continue
 		}
+
+		change := configFieldChange{name: fieldName}
+		if !IsOpaqueLogField(fieldName) {
+			change.oldValue = formatLogChangeValue(fieldName, oldField)
+			change.newValue = formatLogChangeValue(fieldName, newField)
+			change.withValue = true
+		}
+		changes = append(changes, change)
 	}
+	return changes
 }
 
 func formatLogChangeValue(fieldName string, v reflect.Value) string {

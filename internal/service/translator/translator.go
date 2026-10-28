@@ -1,25 +1,9 @@
 package translator
 
 import (
-	"bufio"
-	"bytes"
-	"fmt"
-	"io"
-	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
-
-	"github.com/fusionn-subs/internal/util"
-	"github.com/fusionn-subs/pkg/logger"
-)
-
-// ANSI escape codes for dimmed output (like Docker build logs)
-const (
-	dimStart = "\033[2m"
-	dimEnd   = "\033[0m"
 )
 
 type Terminology struct {
@@ -56,71 +40,6 @@ func appendTerminologyArgs(args []string, req Request) []string {
 	return args
 }
 
-// executeScript executes a script command and handles stdout/stderr streaming
-func executeScript(cmd *exec.Cmd, outputPath string) (resultPath, combinedOutput string, err error) {
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", "", fmt.Errorf("stdout pipe: %w", err)
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return "", "", fmt.Errorf("stderr pipe: %w", err)
-	}
-
-	var stdoutBuf, stderrBuf bytes.Buffer
-	var wg sync.WaitGroup
-
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		streamDimmed(stdoutPipe, &stdoutBuf)
-	}()
-	go func() {
-		defer wg.Done()
-		streamDimmed(stderrPipe, &stderrBuf)
-	}()
-
-	if err := cmd.Start(); err != nil {
-		return "", "", fmt.Errorf("start script: %w", err)
-	}
-
-	wg.Wait()
-	err = cmd.Wait()
-
-	stdoutStr := strings.TrimSpace(stdoutBuf.String())
-	stderrStr := strings.TrimSpace(stderrBuf.String())
-	combined := stdoutStr + "\n" + stderrStr
-
-	if reason, failed := detectScriptFailure(stdoutStr, stderrStr); failed {
-		logger.Errorf("Script failure detected: %s", reason)
-		return "", combined, fmt.Errorf("script reported failure: %s", reason)
-	}
-
-	if err != nil {
-		// Process failed (e.g. killed by timeout), but check if the output file
-		// was already written. llm-subtrans saves the file before exiting, so a
-		// kill during cleanup should not discard a valid result.
-		if _, statErr := os.Stat(outputPath); statErr == nil {
-			logger.Warnf("Script exited with error (%v) but output file exists, treating as success: %s", err, outputPath)
-			return outputPath, combined, nil
-		}
-
-		logger.Errorf("Translation failed: %v", err)
-		if stderrStr != "" {
-			logger.Errorf("Script stderr: %s", stderrStr)
-		}
-		return "", combined, fmt.Errorf("script failed: %w", err)
-	}
-
-	if _, statErr := os.Stat(outputPath); statErr != nil {
-		logger.Errorf("Output file not found after script completed")
-		return "", combined, fmt.Errorf("output not found: %w", statErr)
-	}
-
-	logger.Infof("✅ Translation completed: %s", outputPath)
-	return outputPath, combined, nil
-}
-
 func buildCommandLine(cmd string, args []string) string {
 	// Pre-allocate capacity
 	parts := make([]string, 0, len(args)+1)
@@ -141,56 +60,40 @@ func shellQuote(arg string) string {
 	return strconv.Quote(arg)
 }
 
+// separatedAPIKeyPattern and equalsAPIKeyPattern find credential flag values
+// in a rendered command line.
 var separatedAPIKeyPattern = regexp.MustCompile(`((?:-k|--apikey)\s+)(\S+)`)
-var equalsAPIKeyPattern = regexp.MustCompile(`(--apikey=)(\S+)`)
+var equalsAPIKeyPattern = regexp.MustCompile(`((?:-k|--apikey)=)(\S+)`)
 
-// maskAPIKeyInCommand replaces API key flag values with masked versions for logging.
+// maskAPIKeyInCommand renders credential flag values as the shared "***"
+// placeholder, so a log line never carries even a prefix of a secret.
 func maskAPIKeyInCommand(cmd string) string {
 	cmd = separatedAPIKeyPattern.ReplaceAllStringFunc(cmd, func(match string) string {
 		parts := separatedAPIKeyPattern.FindStringSubmatch(match)
 		if len(parts) == 3 {
-			return parts[1] + util.MaskSecret(parts[2])
+			return parts[1] + "***"
 		}
 		return match
 	})
 	return equalsAPIKeyPattern.ReplaceAllStringFunc(cmd, func(match string) string {
 		parts := equalsAPIKeyPattern.FindStringSubmatch(match)
 		if len(parts) == 3 {
-			return parts[1] + util.MaskSecret(parts[2])
+			return parts[1] + "***"
 		}
 		return match
 	})
 }
 
-// streamDimmed reads from r, writes to buf for capture, and prints dimmed to stderr.
-// This creates a Docker-build-like experience where script output is visible but greyed out.
-func streamDimmed(r io.Reader, buf *bytes.Buffer) {
-	scanner := bufio.NewScanner(r)
-	// Increase buffer for potentially long lines
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		buf.WriteString(line)
-		buf.WriteByte('\n')
-		// Print dimmed to stderr (doesn't interfere with structured logs)
-		fmt.Fprintf(os.Stderr, "%s  │ %s%s\n", dimStart, line, dimEnd)
-	}
-
-	if err := scanner.Err(); err != nil {
-		logger.Debugf("Scanner error (may be normal): %v", err)
-	}
+// fatalIndicators mark a failed translation regardless of the process exit code.
+var fatalIndicators = []string{
+	"translationimpossibleerror",
+	"failed to translate",
+	"failed to communicate with provider",
+	"saving partial results",
+	"traceback (most recent call last)",
 }
 
 func detectScriptFailure(stdoutStr, stderrStr string) (string, bool) {
-	fatalIndicators := []string{
-		"translationimpossibleerror",
-		"failed to translate",
-		"failed to communicate with provider",
-		"saving partial results",
-		"traceback (most recent call last)",
-	}
-
 	combined := strings.ToLower(stdoutStr + "\n" + stderrStr)
 	for _, indicator := range fatalIndicators {
 		if strings.Contains(combined, indicator) {

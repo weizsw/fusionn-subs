@@ -10,8 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/fusionn-subs/internal/config"
-	"github.com/fusionn-subs/pkg/logger"
 )
 
 var pacificTZ *time.Location
@@ -61,7 +62,11 @@ func NewGeminiTranslator(ctx context.Context, cfg config.GeminiConfig, targetLan
 	}
 	t.activeModel = &t.primaryModel
 
-	logger.Infof("🤖 Gemini translator: primary=%s, secondary=%s", cfg.PrimaryModel.Name, cfg.SecondaryModel.Name)
+	log.Debug(ctx, "translator_configured", "Translator configured",
+		zap.String("provider", "gemini"),
+		zap.String("primary_model", cfg.PrimaryModel.Name),
+		zap.String("secondary_model", cfg.SecondaryModel.Name),
+	)
 
 	t.startDailyReset(ctx)
 
@@ -70,6 +75,7 @@ func NewGeminiTranslator(ctx context.Context, cfg config.GeminiConfig, targetLan
 
 func (t *GeminiTranslator) Translate(ctx context.Context, req Request) (string, error) {
 	msg := req.Job
+	ctx = withJobID(ctx, msg.JobID)
 	if err := msg.Validate(); err != nil {
 		return "", fmt.Errorf("invalid message: %w", err)
 	}
@@ -93,16 +99,16 @@ func (t *GeminiTranslator) Translate(ctx context.Context, req Request) (string, 
 
 	cmd.Env = append(os.Environ(), "GEMINI_API_KEY="+t.apiKey, "PYTHONUNBUFFERED=1")
 
-	logger.Infof("🔄 Starting translation (Gemini/%s): %s → %s", model.Name, msg.SubtitlePath, outputPath)
-	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
+	logToolStarted(ctx, toolGeminiSubtrans, msg, outputPath, zap.String("model", model.Name))
+	logToolCommand(ctx, toolGeminiSubtrans, t.scriptPath, args)
 
-	resultPath, combinedOutput, err := executeScript(cmd, outputPath)
+	result, err := executeScript(ctx, toolGeminiSubtrans, cmd, outputPath)
 	if err != nil {
 		os.Remove(outputPath)
 
-		if isRateLimitError(combinedOutput) {
+		if result.RateLimited {
 			if isPrimary {
-				t.switchToSecondary()
+				t.switchToSecondary(ctx)
 				return "", fmt.Errorf("%w: %s exhausted, switched to %s", ErrRateLimited, model.Name, t.secondaryModel.Name)
 			}
 			return "", fmt.Errorf("%w: %s also exhausted", ErrAllModelsExhausted, model.Name)
@@ -111,7 +117,7 @@ func (t *GeminiTranslator) Translate(ctx context.Context, req Request) (string, 
 		return "", err
 	}
 
-	return resultPath, nil
+	return result.Path, nil
 }
 
 func (t *GeminiTranslator) buildArgs(req Request, outputPath string, model config.GeminiModelConfig) []string {
@@ -146,22 +152,30 @@ func (t *GeminiTranslator) buildArgs(req Request, outputPath string, model confi
 	return appendTerminologyArgs(args, req)
 }
 
-func (t *GeminiTranslator) switchToSecondary() {
+func (t *GeminiTranslator) switchToSecondary(ctx context.Context) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.primaryExhausted = true
 	t.activeModel = &t.secondaryModel
-	logger.Infof("⚠️ Primary model rate-limited, switching to secondary: %s", t.secondaryModel.Name)
+	log.Warn(ctx, "model_switched", "Primary model rate limited",
+		zap.String("from_model", t.primaryModel.Name),
+		zap.String("to_model", t.secondaryModel.Name),
+		zap.String("reason", "rate_limited"),
+	)
 }
 
-func (t *GeminiTranslator) ResetToPrimary() {
+func (t *GeminiTranslator) ResetToPrimary(ctx context.Context) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	wasExhausted := t.primaryExhausted
 	t.primaryExhausted = false
 	t.activeModel = &t.primaryModel
 	if wasExhausted {
-		logger.Infof("🔄 Daily reset: switched back to primary model (%s)", t.primaryModel.Name)
+		log.Info(ctx, "model_switched", "Switched back to primary model",
+			zap.String("from_model", t.secondaryModel.Name),
+			zap.String("to_model", t.primaryModel.Name),
+			zap.String("reason", "daily_reset"),
+		)
 	}
 }
 
@@ -183,7 +197,11 @@ func (t *GeminiTranslator) UpdateFromConfig(cfg *config.Config) {
 		t.activeModel = &t.primaryModel
 	}
 
-	logger.Infof("🔄 Gemini config reloaded: primary=%s, secondary=%s", geminiCfg.PrimaryModel.Name, geminiCfg.SecondaryModel.Name)
+	log.Info(context.Background(), "config_reloaded", "Translator config reloaded",
+		zap.String("provider", "gemini"),
+		zap.String("primary_model", geminiCfg.PrimaryModel.Name),
+		zap.String("secondary_model", geminiCfg.SecondaryModel.Name),
+	)
 }
 
 func (t *GeminiTranslator) startDailyReset(ctx context.Context) {
@@ -198,32 +216,26 @@ func (t *GeminiTranslator) startDailyReset(ctx context.Context) {
 				timer.Stop()
 				return
 			case <-timer.C:
-				t.ResetToPrimary()
+				t.ResetToPrimary(ctx)
 			}
 		}
 	}()
 }
 
+// rateLimitIndicators mark provider quota exhaustion; they drive the Gemini
+// primary/secondary model switch.
+var rateLimitIndicators = []string{
+	"resource_exhausted",
+	"quota exceeded",
+	"429 too many requests",
+	"429 resource exhausted",
+	"rate limit exceeded",
+}
+
 func isRateLimitError(output string) bool {
 	lower := strings.ToLower(output)
-
-	geminiIndicators := []string{
-		"resource_exhausted",
-		"quota exceeded",
-	}
-	for _, ind := range geminiIndicators {
-		if strings.Contains(lower, ind) {
-			return true
-		}
-	}
-
-	genericIndicators := []string{
-		"429 too many requests",
-		"429 resource exhausted",
-		"rate limit exceeded",
-	}
-	for _, ind := range genericIndicators {
-		if strings.Contains(lower, ind) {
+	for _, indicator := range rateLimitIndicators {
+		if strings.Contains(lower, indicator) {
 			return true
 		}
 	}

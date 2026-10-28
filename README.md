@@ -307,7 +307,28 @@ services:
       # OR use Gemini
       # FUSIONN_SUBS_GEMINI_API_KEY: ${GEMINI_API_KEY}
       TZ: Asia/Shanghai
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "6"
 ```
+
+## Logging
+
+Each event is one line:
+
+```text
+2026-07-01T14:20:03.456+08:00 WARN service=fusionn-subs component=translator event=translation_retry job_id=abc retry=1 retry_after_ms=2000 error="provider timeout" msg="Translation will retry"
+```
+
+The service writes the lines to standard output. Docker collects them with the `json-file` driver. The Compose file sets `max-size` to `20m` and `max-file` to `6`, so each container keeps six files of 20 MB or less.
+
+`LOG_LEVEL` sets the log level. The values are `DEBUG`, `INFO`, `WARN` (`WARNING` is accepted as an alias), and `ERROR`. The output always shows `WARN`. The default is `INFO`. If the value is not valid, the service keeps `INFO` and writes one `config_invalid` warning at startup.
+
+INFO shows the lifecycle of each job, for example the start, the retries, and the final result. DEBUG adds controlled details, for example the masked tool command and one short preview of the tool output. The preview is capped at 512 characters. API keys, tokens, and passwords are masked at all levels.
+
+Read the logs with `make docker-logs` or from the container page in OrbStack.
 
 ## Development
 

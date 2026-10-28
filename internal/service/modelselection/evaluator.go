@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"go.uber.org/zap"
 
 	"github.com/fusionn-subs/internal/client/openrouter"
-	"github.com/fusionn-subs/pkg/logger"
 )
 
 //go:embed prompts/model_evaluation.tmpl
@@ -53,7 +53,10 @@ func NewGeminiEvaluator(apiKey, model string) *GeminiEvaluator {
 			}).
 			OnAfterResponse(func(c *resty.Client, r *resty.Response) error {
 				if r.Request.Attempt > 0 {
-					logger.Warnf("⚠️  Gemini API retry attempt #%d (status: %d)", r.Request.Attempt, r.StatusCode())
+					log.Warn(context.Background(), "api_retry", "Gemini API retry",
+						zap.Int("attempt_number", r.Request.Attempt),
+						zap.Int("status_code", r.StatusCode()),
+					)
 				}
 				return nil
 			}),
@@ -76,14 +79,15 @@ func (e *GeminiEvaluator) SelectBestModel(models []openrouter.Model) (string, er
 	for i, m := range models {
 		modelIDs[i] = m.ID
 	}
-	logger.Infof("🤔 Evaluating %d models with %s", len(models), e.model)
-	logger.Infof("📋 Models to evaluate: %v", modelIDs)
-
-	// Log first part of prompt for debugging
-	promptPreview := prompt
-	logger.Debugf("📝 Evaluation prompt:\n%s", promptPreview)
-
 	ctx := context.Background()
+	log.Info(ctx, "evaluation_started", "Evaluating models",
+		zap.Int("model_count", len(models)),
+		zap.String("evaluator_model", e.model),
+	)
+	log.Debug(ctx, "models_to_evaluate", "Models to evaluate",
+		zap.String("models", strings.Join(modelIDs, ",")),
+	)
+
 	selectedModel, err := e.callGemini(ctx, prompt)
 	if err != nil {
 		return "", fmt.Errorf("gemini evaluation failed: %w", err)
@@ -93,7 +97,7 @@ func (e *GeminiEvaluator) SelectBestModel(models []openrouter.Model) (string, er
 	selectedModel = strings.TrimSpace(selectedModel)
 	for _, m := range models {
 		if m.ID == selectedModel {
-			logger.Infof("✅ Selected model: %s", selectedModel)
+			log.Info(ctx, "model_selected", "Model selected", zap.String("model", selectedModel))
 			return selectedModel, nil
 		}
 	}
@@ -107,18 +111,16 @@ func (e *GeminiEvaluator) SelectBestModel(models []openrouter.Model) (string, er
 	}
 
 	if len(suggestions) > 0 {
-		logger.Warnf("⚠️  Gemini returned invalid model '%s', possible matches: %v", selectedModel, suggestions)
-		// Use first suggestion
-		logger.Infof("✅ Using closest match: %s", suggestions[0])
+		log.Warn(ctx, "model_not_found", "Model not found in candidate list",
+			zap.String("model", selectedModel),
+			zap.String("suggestions", strings.Join(suggestions, ",")),
+		)
+		log.Info(ctx, "model_selected", "Model selected",
+			zap.String("model", suggestions[0]),
+			zap.String("matched", "closest"),
+		)
 		return suggestions[0], nil
 	}
-
-	// No matches found at all - list available models for debugging
-	availableModels := make([]string, 0, len(models))
-	for _, m := range models {
-		availableModels = append(availableModels, m.ID)
-	}
-	logger.Errorf("Available models: %v", availableModels)
 
 	return "", fmt.Errorf("selected model '%s' not found in available models", selectedModel)
 }
@@ -190,21 +192,20 @@ func (e *GeminiEvaluator) callGemini(ctx context.Context, prompt string) (string
 
 	resp, err := e.client.R().
 		SetContext(ctx).
-		SetQueryParam("key", e.apiKey).
+		SetHeader("x-goog-api-key", e.apiKey).
 		SetBody(requestBody).
 		SetResult(&result).
 		SetError(&result).
 		Post(url)
 
 	if err != nil {
-		return "", fmt.Errorf("http request: %w", err)
+		// The key travels in a header, so a transport error cannot echo it.
+		return "", fmt.Errorf("http request failed: %w", err)
 	}
 
 	if !resp.IsSuccess() {
-		if result.Error.Message != "" {
-			return "", fmt.Errorf("API error %d: %s", result.Error.Code, result.Error.Message)
-		}
-		return "", fmt.Errorf("API error %d: %s", resp.StatusCode(), resp.String())
+		// Provider error bodies are not replayed; the status is the reason.
+		return "", fmt.Errorf("API error %d", resp.StatusCode())
 	}
 
 	if len(result.Candidates) == 0 || len(result.Candidates[0].Content.Parts) == 0 {
@@ -212,11 +213,15 @@ func (e *GeminiEvaluator) callGemini(ctx context.Context, prompt string) (string
 	}
 
 	rawResponse := result.Candidates[0].Content.Parts[0].Text
-	logger.Infof("💬 Gemini raw response: %q", rawResponse)
+	log.Debug(ctx, "model_evaluation_response", "Gemini response received",
+		zap.Int("response_length", len(rawResponse)),
+	)
 
 	// Warn if response is verbose (indicates prompt not followed)
 	if len(rawResponse) > 100 {
-		logger.Warnf("⚠️  Gemini returned verbose response (%d chars) instead of just model ID", len(rawResponse))
+		log.Warn(ctx, "verbose_response", "Gemini returned verbose response",
+			zap.Int("response_length", len(rawResponse)),
+		)
 	}
 
 	selectedModel := strings.TrimSpace(rawResponse)
@@ -230,7 +235,7 @@ func (e *GeminiEvaluator) callGemini(ctx context.Context, prompt string) (string
 		matches := re.FindStringSubmatch(selectedModel)
 		if len(matches) > 1 {
 			extractedID := matches[1]
-			logger.Infof("🔧 Extracted model ID from verbose response: %q", extractedID)
+			log.Debug(ctx, "model_extracted", "Model ID extracted from verbose response", zap.String("model", extractedID))
 			selectedModel = extractedID
 		} else {
 			// Fallback: take first word/line
@@ -241,7 +246,7 @@ func (e *GeminiEvaluator) callGemini(ctx context.Context, prompt string) (string
 				selectedModel = selectedModel[:idx]
 			}
 			selectedModel = strings.TrimSpace(selectedModel)
-			logger.Infof("🔧 Extracted model ID: %q (first word/line from response)", selectedModel)
+			log.Debug(ctx, "model_extracted", "Model ID extracted from verbose response", zap.String("model", selectedModel))
 		}
 	}
 

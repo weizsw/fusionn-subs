@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"strings"
 
+	"go.uber.org/zap"
+
 	"github.com/fusionn-subs/internal/config"
 	"github.com/fusionn-subs/internal/types"
-	"github.com/fusionn-subs/pkg/logger"
 )
 
 type Translator interface {
@@ -46,11 +47,17 @@ func (f *FallbackTranslator) Translate(ctx context.Context, req Request) (string
 			return "", err
 		}
 		if errors.Is(err, ErrAllModelsExhausted) {
-			logger.Warnf("translator provider %s: all models exhausted, trying next provider", nt.name)
+			log.Warn(ctx, "provider_exhausted", "Provider exhausted",
+				zap.String("provider", nt.name),
+				zap.Error(err),
+			)
 			lastErr = err
 			continue
 		}
-		logger.Warnf("translator provider %s failed: %v, trying next provider", nt.name, err)
+		log.Warn(ctx, "provider_failed", "Provider failed",
+			zap.String("provider", nt.name),
+			zap.Error(err),
+		)
 		lastErr = err
 	}
 	if lastErr != nil {
@@ -94,7 +101,9 @@ func NewTranslator(ctx context.Context, cfg *config.Config) (Translator, error) 
 		for _, nt := range list {
 			providers = append(providers, nt.name)
 		}
-		logger.Infof("🤖 Using providers: %v", providers)
+		log.Info(ctx, "translator_configured", "Translator configured",
+			zap.String("providers", strings.Join(providers, ",")),
+		)
 		if len(list) == 1 {
 			return list[0].translator, nil
 		}
@@ -102,17 +111,22 @@ func NewTranslator(ctx context.Context, cfg *config.Config) (Translator, error) 
 	}
 
 	if cfg.Gemini.APIKey != "" {
-		logger.Infof("🤖 Using Gemini translator (primary: %s, secondary: %s)",
-			cfg.Gemini.PrimaryModel.Name, cfg.Gemini.SecondaryModel.Name)
+		log.Info(ctx, "translator_configured", "Translator configured",
+			zap.String("provider", "gemini"),
+			zap.String("primary_model", cfg.Gemini.PrimaryModel.Name),
+			zap.String("secondary_model", cfg.Gemini.SecondaryModel.Name),
+		)
 		return NewGeminiTranslator(ctx, cfg.Gemini, targetLang, outputSuffix), nil
 	}
 
 	if cfg.OpenRouter.APIKey != "" {
+		fields := []zap.Field{zap.String("provider", "openrouter")}
 		if cfg.OpenRouter.AutoSelectModel {
-			logger.Infof("🤖 Using OpenRouter translator (auto-selection enabled)")
+			fields = append(fields, zap.Bool("auto_select_model", true))
 		} else {
-			logger.Infof("🤖 Using OpenRouter translator (model: %s)", cfg.OpenRouter.Model)
+			fields = append(fields, zap.String("model", cfg.OpenRouter.Model))
 		}
+		log.Info(ctx, "translator_configured", "Translator configured", fields...)
 		return NewOpenRouterTranslator(cfg.OpenRouter, targetLang, outputSuffix), nil
 	}
 

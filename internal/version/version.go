@@ -28,7 +28,9 @@ func Banner() string {
 }
 
 // PrintBanner writes the decorated banner and version info to w (stdout if nil).
-func PrintBanner(w io.Writer) {
+// logLevel is the level the process logs at, so the readout shows what is in
+// effect rather than what was configured.
+func PrintBanner(w io.Writer, logLevel string) {
 	if w == nil {
 		w = os.Stdout
 	}
@@ -37,6 +39,7 @@ func PrintBanner(w io.Writer) {
 	fmt.Fprintln(w, Banner())
 	fmt.Fprintf(w, "\n  fusionn-subs %s\n", Version)
 	fmt.Fprintf(w, "  Subtitle Translation Worker\n")
+	fmt.Fprintf(w, "  Log level: %s\n", logLevel)
 	fmt.Fprintln(w, separator)
 	fmt.Fprintln(w)
 }

@@ -6,9 +6,12 @@ import (
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"go.uber.org/zap"
 
 	"github.com/fusionn-subs/pkg/logger"
 )
+
+var log = logger.Component("callback")
 
 type Payload struct {
 	JobID           string `json:"job_id"`
@@ -42,6 +45,8 @@ func NewClient(url string, timeout time.Duration, maxRetries int, retryBackoffSe
 }
 
 func (c *Client) Send(ctx context.Context, payload Payload) error {
+	ctx = logger.WithJobID(ctx, payload.JobID)
+
 	var lastErr error
 
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
@@ -53,7 +58,11 @@ func (c *Client) Send(ctx context.Context, payload Payload) error {
 			}
 			backoffDuration := time.Duration(c.retryBackoffSeconds[backoffIdx]) * time.Second
 
-			logger.Infof("⏳ Callback retry %d/%d after %v: job_id=%s", attempt, c.maxRetries, backoffDuration, payload.JobID)
+			log.Warn(ctx, "callback_retry", "Callback will retry",
+				zap.Int("retry", attempt),
+				zap.Int64("retry_after_ms", backoffDuration.Milliseconds()),
+				zap.Error(lastErr),
+			)
 
 			select {
 			case <-time.After(backoffDuration):
@@ -62,6 +71,7 @@ func (c *Client) Send(ctx context.Context, payload Payload) error {
 			}
 		}
 
+		started := time.Now()
 		resp, err := c.http.R().
 			SetContext(ctx).
 			SetHeader("Content-Type", "application/json").
@@ -69,17 +79,12 @@ func (c *Client) Send(ctx context.Context, payload Payload) error {
 			Post(c.url)
 		if err != nil {
 			lastErr = fmt.Errorf("send callback: %w", err)
-			logger.Warnf("Callback attempt %d failed: %v", attempt+1, lastErr)
 			continue
 		}
 
 		if resp.StatusCode() >= 300 {
-			body := resp.String()
-			if len(body) > 200 {
-				body = body[:200] + "..."
-			}
-			lastErr = fmt.Errorf("callback failed: status %d, body: %s", resp.StatusCode(), body)
-			logger.Warnf("Callback attempt %d failed: %v", attempt+1, lastErr)
+			// The response body is not logged; the status is the failure reason.
+			lastErr = fmt.Errorf("callback failed: status %d", resp.StatusCode())
 
 			// Don't retry on 4xx errors (client errors)
 			if resp.StatusCode() >= 400 && resp.StatusCode() < 500 {
@@ -88,10 +93,13 @@ func (c *Client) Send(ctx context.Context, payload Payload) error {
 			continue
 		}
 
-		logger.Infof("📤 Callback delivered: job_id=%s (attempt %d)", payload.JobID, attempt+1)
+		log.Info(ctx, "callback_delivered", "Callback delivered",
+			zap.Int("status_code", resp.StatusCode()),
+			logger.DurMs(time.Since(started)),
+			zap.Int("attempt_number", attempt+1),
+		)
 		return nil
 	}
 
-	logger.Errorf("❌ Callback failed after %d attempts: job_id=%s, error: %v", c.maxRetries+1, payload.JobID, lastErr)
 	return fmt.Errorf("callback failed after %d attempts: %w", c.maxRetries+1, lastErr)
 }

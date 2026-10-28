@@ -10,8 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/fusionn-subs/internal/config"
-	"github.com/fusionn-subs/pkg/logger"
 )
 
 type OpenAITranslator struct {
@@ -84,6 +85,7 @@ func NewOpenAITranslator(cfg config.OpenAIConfig, targetLang, outputSuffix strin
 
 func (t *OpenAITranslator) Translate(ctx context.Context, req Request) (string, error) {
 	msg := req.Job
+	ctx = withJobID(ctx, msg.JobID)
 	if err := msg.Validate(); err != nil {
 		return "", fmt.Errorf("invalid message: %w", err)
 	}
@@ -108,17 +110,20 @@ func (t *OpenAITranslator) Translate(ctx context.Context, req Request) (string, 
 			cmd.Env = append(cmd.Env, "OPENAI_API_KEY="+attempt.apiKey)
 		}
 
-		logger.Infof("🔄 Starting translation (OpenAI/%s): %s → %s", model, msg.SubtitlePath, outputPath)
-		logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
+		logToolStarted(ctx, toolGPTSubtrans, msg, outputPath, zap.String("model", model))
+		logToolCommand(ctx, toolGPTSubtrans, t.scriptPath, args)
 
-		resultPath, _, err := executeScript(cmd, outputPath)
+		result, err := executeScript(ctx, toolGPTSubtrans, cmd, outputPath)
 		cancel()
 		if err == nil {
-			return resultPath, nil
+			return result.Path, nil
 		}
 		lastErr = err
 		os.Remove(outputPath)
-		logger.Warnf("OpenAI model failed: model=%s error=%v", model, err)
+		log.Warn(ctx, "model_failed", "OpenAI model failed",
+			zap.String("model", model),
+			zap.Error(err),
+		)
 	}
 
 	if lastErr == nil {
@@ -214,7 +219,10 @@ func (t *OpenAITranslator) UpdateFromConfig(cfg *config.Config) {
 	t.maxBatchSize = openAICfg.MaxBatchSize
 	t.timeout = timeout
 
-	logger.Infof("🔄 OpenAI config reloaded: model=%s", t.model)
+	log.Info(context.Background(), "config_reloaded", "Translator config reloaded",
+		zap.String("provider", "openai"),
+		zap.String("model", t.model),
+	)
 }
 
 func openAIModelAttempts(snapshot openAISnapshot) []string {

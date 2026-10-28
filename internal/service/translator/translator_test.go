@@ -5,7 +5,6 @@ import (
 	"errors"
 	"reflect"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -151,31 +150,37 @@ func TestMaskAPIKeyInCommandMasksSeparatedShortAndLongFlags(t *testing.T) {
 	tests := []struct {
 		name string
 		cmd  string
+		want string
 	}{
-		{name: "short", cmd: "/opt/script -k sk-short-secret -m model"},
-		{name: "long", cmd: "/opt/script --apikey sk-long-secret --model model"},
+		{name: "short", cmd: "/opt/script -k sk-short-secret -m model", want: "/opt/script -k *** -m model"},
+		{name: "long", cmd: "/opt/script --apikey sk-long-secret --model model", want: "/opt/script --apikey *** --model model"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := maskAPIKeyInCommand(tt.cmd)
-			if strings.Contains(got, "secret") {
-				t.Fatalf("masked command contains raw secret: %s", got)
-			}
-			if got == tt.cmd {
-				t.Fatalf("command was not masked: %s", got)
+			if got := maskAPIKeyInCommand(tt.cmd); got != tt.want {
+				t.Fatalf("maskAPIKeyInCommand() = %q, want %q", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestMaskAPIKeyInCommandMasksLongEqualsFlag(t *testing.T) {
-	got := maskAPIKeyInCommand("/opt/script --apikey=sk-equals-secret --model model")
-	if strings.Contains(got, "sk-equals-secret") {
-		t.Fatalf("masked command contains raw secret: %s", got)
+func TestMaskAPIKeyInCommandMasksEqualsFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+		want string
+	}{
+		{name: "long", cmd: "/opt/script --apikey=sk-equals-secret --model model", want: "/opt/script --apikey=*** --model model"},
+		{name: "short", cmd: "/opt/script -k=sk-equals-secret --model model", want: "/opt/script -k=*** --model model"},
 	}
-	if got == "/opt/script --apikey=sk-equals-secret --model model" {
-		t.Fatalf("command was not masked: %s", got)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := maskAPIKeyInCommand(tt.cmd); got != tt.want {
+				t.Fatalf("maskAPIKeyInCommand() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

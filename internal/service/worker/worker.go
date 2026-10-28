@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 
 	"github.com/fusionn-subs/internal/client/callback"
 	"github.com/fusionn-subs/internal/service/translator"
@@ -15,17 +16,23 @@ import (
 	"github.com/fusionn-subs/pkg/logger"
 )
 
+var log = logger.Component("worker")
+
 const (
 	// Backoff settings for Redis connection errors
 	initialBackoff = time.Second
 	maxBackoff     = 30 * time.Second
 	backoffFactor  = 2
+
+	// Delay between translation attempts when the queue config does not set one
+	defaultTranslationRetryDelay = 2 * time.Second
 )
 
 type Config struct {
 	Queue                 string
 	PollTimeout           time.Duration
 	MaxTranslationRetries int
+	TranslationRetryDelay time.Duration
 }
 
 type GlossaryPayload struct {
@@ -70,7 +77,10 @@ func (w *Worker) Run(ctx context.Context) error {
 				}
 
 				// Exponential backoff for connection errors
-				logger.Errorf("Worker error: %v (retry in %v)", err, backoff)
+				log.Warn(ctx, "queue_unavailable", "Queue unavailable",
+					zap.Int64("retry_after_ms", backoff.Milliseconds()),
+					zap.Error(err),
+				)
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
@@ -96,35 +106,47 @@ func (w *Worker) processNext(ctx context.Context) error {
 	}
 
 	if len(result) < 2 {
-		logger.Warn("Redis returned unexpected payload format")
+		log.Warn(ctx, "queue_payload_invalid", "Unexpected queue payload")
 		return nil
 	}
 
 	rawMsg := result[1]
 	var msg types.JobMessage
 	if err := json.Unmarshal([]byte(rawMsg), &msg); err != nil {
-		logger.Errorf("Failed to parse message (dropping): %v", err)
+		log.Error(ctx, "job_dropped", "Dropping unparseable job message", zap.Error(err))
 		return nil // Bad message, don't retry
 	}
 
-	logger.Infof("📥 Message received: %s (%s) [job: %s]", msg.MediaTitle, msg.MediaType, msg.JobID)
+	w.handleMessage(ctx, msg)
+	return nil
+}
 
-	// Process the job
+// handleMessage runs one job and records its single boundary failure event.
+func (w *Worker) handleMessage(ctx context.Context, msg types.JobMessage) {
+	ctx = logger.WithJobID(ctx, msg.JobID)
+
+	log.Info(ctx, "job_received", "Job received",
+		zap.String("media_type", msg.MediaType),
+		zap.String("subtitle_path", msg.SubtitlePath),
+	)
+
+	started := time.Now()
 	if err := w.processJob(ctx, msg); err != nil {
-		logger.Errorf("❌ Job failed for %s: %v", msg.SubtitlePath, err)
+		log.Error(ctx, "job_failed", "Job failed",
+			zap.String("stage", jobStage(err)),
+			logger.DurMs(time.Since(started)),
+			zap.Error(err),
+		)
 		// Note: Message is already consumed. Consider implementing:
 		// - Dead letter queue for failed jobs
 		// - Retry with LPUSH back to queue
-		return nil
 	}
-
-	return nil
 }
 
 func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
 	chsPath, err := w.translateJob(ctx, msg)
 	if err != nil {
-		return err
+		return &stageError{stage: "translation", err: err}
 	}
 
 	payload := callback.Payload{
@@ -135,10 +157,10 @@ func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
 	}
 
 	if err := w.callback.Send(ctx, payload); err != nil {
-		return err
+		return &stageError{stage: "callback", err: err}
 	}
 
-	logger.Infof("✅ Completed: %s", chsPath)
+	log.Info(ctx, "job_completed", "Job completed", zap.String("chs_subtitle_path", chsPath))
 	return nil
 }
 
@@ -157,12 +179,12 @@ func (w *Worker) translateJob(ctx context.Context, msg types.JobMessage) (string
 	if maxRetries <= 0 {
 		maxRetries = 3 // Default
 	}
+	retryDelay := w.cfg.TranslationRetryDelay
+	if retryDelay <= 0 {
+		retryDelay = defaultTranslationRetryDelay
+	}
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if attempt > 1 {
-			logger.Infof("⏳ Translation retry %d/%d: job_id=%s", attempt-1, maxRetries-1, msg.JobID)
-		}
-
 		var err error
 		chsPath, err := w.translator.Translate(ctx, translator.Request{
 			Job:                 msg,
@@ -171,31 +193,61 @@ func (w *Worker) translateJob(ctx context.Context, msg types.JobMessage) (string
 		})
 		if err == nil {
 			if attempt > 1 {
-				logger.Infof("✅ Translation succeeded on attempt %d", attempt)
+				log.Info(ctx, "translation_recovered", "Translation recovered after retry",
+					zap.Int("attempt_number", attempt),
+				)
 			}
 			return chsPath, nil
 		}
 
 		lastErr = err
-		logger.Warnf("Translation attempt %d failed: %v", attempt, err)
 
 		if errors.Is(err, translator.ErrAllModelsExhausted) {
 			break
 		}
+		if attempt == maxRetries {
+			break
+		}
 
-		if attempt < maxRetries && !errors.Is(err, translator.ErrRateLimited) {
-			select {
-			case <-time.After(2 * time.Second):
-			case <-ctx.Done():
-				return "", ctx.Err()
-			}
+		attrs := []zap.Field{
+			zap.Int("retry", attempt),
+			zap.Error(err),
+		}
+		if errors.Is(err, translator.ErrRateLimited) {
+			log.Warn(ctx, "translation_retry", "Translation will retry", attrs...)
+			continue
+		}
+		attrs = append(attrs, zap.Int64("retry_after_ms", retryDelay.Milliseconds()))
+		log.Warn(ctx, "translation_retry", "Translation will retry", attrs...)
+
+		select {
+		case <-time.After(retryDelay):
+		case <-ctx.Done():
+			return "", ctx.Err()
 		}
 	}
 
 	if errors.Is(lastErr, translator.ErrAllModelsExhausted) {
-		logger.Errorf("❌ All models exhausted: job_id=%s", msg.JobID)
 		return "", fmt.Errorf("all models exhausted: %w", lastErr)
 	}
-	logger.Errorf("❌ Translation failed after %d attempts: job_id=%s", maxRetries, msg.JobID)
 	return "", fmt.Errorf("translation failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+// stageError records which pipeline stage failed so the worker boundary can
+// report the stage while logging the single failure record.
+type stageError struct {
+	stage string
+	err   error
+}
+
+func (e *stageError) Error() string { return e.err.Error() }
+
+func (e *stageError) Unwrap() error { return e.err }
+
+func jobStage(err error) string {
+	var se *stageError
+	if errors.As(err, &se) {
+		return se.stage
+	}
+	return "unknown"
 }

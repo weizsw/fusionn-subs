@@ -10,8 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/fusionn-subs/internal/config"
-	"github.com/fusionn-subs/pkg/logger"
 )
 
 // LocalLLMTranslator implements translation using a custom OpenAI-compatible server via llm-subtrans.sh
@@ -88,6 +89,7 @@ func NewLocalLLMTranslator(cfg config.LocalLLMConfig, targetLang, outputSuffix s
 // Translate translates subtitles using a local/custom OpenAI-compatible endpoint
 func (t *LocalLLMTranslator) Translate(ctx context.Context, req Request) (string, error) {
 	msg := req.Job
+	ctx = withJobID(ctx, msg.JobID)
 	if err := msg.Validate(); err != nil {
 		return "", fmt.Errorf("invalid message: %w", err)
 	}
@@ -120,16 +122,16 @@ func (t *LocalLLMTranslator) Translate(ctx context.Context, req Request) (string
 
 	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
 
-	logger.Infof("🔄 Starting translation (Local LLM): %s → %s", msg.SubtitlePath, outputPath)
-	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
+	logToolStarted(ctx, toolLLMSubtrans, msg, outputPath, zap.String("model", snapshot.model))
+	logToolCommand(ctx, toolLLMSubtrans, t.scriptPath, args)
 
-	resultPath, _, err := executeScript(cmd, outputPath)
+	result, err := executeScript(ctx, toolLLMSubtrans, cmd, outputPath)
 	if err != nil {
 		os.Remove(outputPath)
 		return "", err
 	}
 
-	return resultPath, nil
+	return result.Path, nil
 }
 
 func buildLocalLLMArgs(req Request, outputPath string, snapshot localLLMSnapshot) []string {
@@ -193,5 +195,8 @@ func (t *LocalLLMTranslator) UpdateFromConfig(cfg *config.Config) {
 		t.timeout = config.DefaultLocalLLMTimeout
 	}
 
-	logger.Infof("🔄 Local LLM config reloaded: %s (model: %s)", t.baseURL, t.model)
+	log.Info(context.Background(), "config_reloaded", "Translator config reloaded",
+		zap.String("provider", "local_llm"),
+		zap.String("model", t.model),
+	)
 }
