@@ -273,6 +273,60 @@ func TestExecuteScriptReturnsErrorWhenCommandIsCancelled(t *testing.T) {
 	}
 }
 
+// TestExecuteScriptCancellationStopsAForkedChild uses a fixture that forces a
+// real fork: a backgrounded subshell inherits the pipes on every platform,
+// while macOS execs a plain `sh -c "sleep 5"` into the child and hides the
+// Linux hang. The child heartbeats, so a stopped heartbeat shows that it died
+// with the canceled group, without asking whether a Linux zombie still answers
+// signal 0.
+func TestExecuteScriptCancellationStopsAForkedChild(t *testing.T) {
+	dir := t.TempDir()
+	heartbeat := filepath.Join(dir, "heartbeat")
+	out := filepath.Join(dir, "out.srt")
+	script := "( i=0; while [ $i -lt 100 ]; do i=$((i+1)); echo $i > " + shellQuote(heartbeat) +
+		"; sleep 0.05; done ) & wait"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	res, err := executeScript(ctx, "test-tool", exec.CommandContext(ctx, "/bin/sh", "-c", script), out)
+	elapsed := time.Since(started)
+
+	if err == nil {
+		t.Fatal("expected an error after cancellation")
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("cancellation took %v, want the drain to stop promptly", elapsed)
+	}
+	if res.Path != "" {
+		t.Fatalf("path = %q, want empty", res.Path)
+	}
+
+	// Let the group kill land, then check that the heartbeat stopped.
+	time.Sleep(250 * time.Millisecond)
+	settled := readHeartbeat(t, heartbeat)
+	time.Sleep(250 * time.Millisecond)
+	if later := readHeartbeat(t, heartbeat); later != settled {
+		t.Fatalf("forked child kept running after cancellation: heartbeat %q -> %q", settled, later)
+	}
+}
+
+func readHeartbeat(t *testing.T, path string) string {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if raw, err := os.ReadFile(path); err == nil {
+			if beat := strings.TrimSpace(string(raw)); beat != "" {
+				return beat
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("forked child never wrote its heartbeat to %s", path)
+	return ""
+}
+
 func TestExecuteScriptWritesNothingToProcessStdStreams(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "out.srt")
 
