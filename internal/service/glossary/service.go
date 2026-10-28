@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/fusionn-subs/internal/types"
 	"github.com/fusionn-subs/pkg/logger"
 )
+
+var log = logger.Component("glossary")
 
 type ServiceConfig struct {
 	Enabled                   bool
@@ -44,6 +48,7 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (Payload, e
 		return Payload{}, fmt.Errorf("glossary store is required")
 	}
 
+	ctx = logger.WithJobID(ctx, msg.JobID)
 	mediaKey := ResolveMediaKey(msg)
 	entries, err := s.store.LoadPromptEntries(ctx, mediaKey.Value, s.cfg.TargetLanguage)
 	if err != nil {
@@ -72,14 +77,20 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (Payload, e
 		MaxSnippetsPerCandidate: s.cfg.MaxSnippetsPerCandidate,
 	})
 	if extractErr != nil {
-		logger.Warnf("glossary extraction skipped: %v", extractErr)
+		log.Warn(ctx, "extraction_skipped", "Glossary extraction skipped",
+			zap.String("media_key", mediaKey.Value),
+			zap.Error(extractErr),
+		)
 		if err := s.recordCompleted(ctx, msg, mediaKey.Value); err != nil {
 			return Payload{}, err
 		}
 		return currentPayload(), nil
 	}
 	if len(candidates) == 0 {
-		logger.Infof("Glossary LLM generation skipped: job_id=%s media_key=%s no candidates found", msg.JobID, mediaKey.Value)
+		log.Info(ctx, "generation_skipped", "Glossary generation skipped",
+			zap.String("media_key", mediaKey.Value),
+			zap.String("reason", "no_candidates"),
+		)
 		if err := s.recordCompleted(ctx, msg, mediaKey.Value); err != nil {
 			return Payload{}, err
 		}
@@ -87,7 +98,10 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (Payload, e
 	}
 
 	if s.llm == nil {
-		logger.Warn("glossary LLM generation skipped: no client configured")
+		log.Warn(ctx, "generation_skipped", "Glossary generation skipped",
+			zap.String("media_key", mediaKey.Value),
+			zap.String("reason", "no_client"),
+		)
 		if err := s.recordCompleted(ctx, msg, mediaKey.Value); err != nil {
 			return Payload{}, err
 		}
@@ -106,7 +120,12 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (Payload, e
 		MaxPromptEntries: s.cfg.MaxPromptEntries,
 	})
 
-	logger.Infof("Glossary LLM generation started: job_id=%s media_key=%s target_language=%s candidates=%d existing_entries=%d", msg.JobID, mediaKey.Value, s.cfg.TargetLanguage, len(candidates), len(existingEntries))
+	log.Info(ctx, "generation_started", "Glossary generation started",
+		zap.String("media_key", mediaKey.Value),
+		zap.String("target_language", s.cfg.TargetLanguage),
+		zap.Int("candidates", len(candidates)),
+		zap.Int("existing_entries", len(existingEntries)),
+	)
 	llmStartedAt := time.Now()
 	resp, err := s.llm.GenerateGlossary(llmCtx, GenerateRequest{
 		Job:             msg,
@@ -117,13 +136,23 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (Payload, e
 	})
 	llmDuration := time.Since(llmStartedAt).Round(time.Millisecond)
 	if err != nil {
-		logger.Warnf("glossary LLM generation skipped: job_id=%s media_key=%s candidates=%d duration=%s error=%v", msg.JobID, mediaKey.Value, len(candidates), llmDuration, err)
+		log.Warn(ctx, "generation_skipped", "Glossary generation skipped",
+			zap.String("media_key", mediaKey.Value),
+			zap.Int("candidates", len(candidates)),
+			logger.DurMs(llmDuration),
+			zap.String("reason", "llm_error"),
+			zap.Error(err),
+		)
 		if err := s.recordCompleted(ctx, msg, mediaKey.Value); err != nil {
 			return Payload{}, err
 		}
 		return currentPayload(), nil
 	}
-	logger.Infof("Glossary LLM generation completed: job_id=%s media_key=%s entries=%d duration=%s", msg.JobID, mediaKey.Value, len(resp.Entries), llmDuration)
+	log.Info(ctx, "generation_completed", "Glossary generation completed",
+		zap.String("media_key", mediaKey.Value),
+		zap.Int("entries", len(resp.Entries)),
+		logger.DurMs(llmDuration),
+	)
 
 	result, err := s.store.UpsertGeneratedEntries(ctx, UpsertRequest{
 		Job:            msg,
@@ -139,7 +168,12 @@ func (s *Service) Prepare(ctx context.Context, msg types.JobMessage) (Payload, e
 	if err != nil {
 		return Payload{}, s.recordFailed(ctx, msg, mediaKey.Value, fmt.Errorf("store glossary entries: %w", err))
 	}
-	logger.Infof("Glossary entries: created=%d merged=%d candidates=%d suppressed=%d", result.Created, result.Merged, result.Candidates, result.Suppressed)
+	log.Info(ctx, "entries_upserted", "Glossary entries stored",
+		zap.Int("created", result.Created),
+		zap.Int("merged", result.Merged),
+		zap.Int("candidates", result.Candidates),
+		zap.Int("suppressed", result.Suppressed),
+	)
 
 	if _, err := s.store.PromoteCommonEntries(ctx, PromotionOptions{
 		TargetLanguage:        s.cfg.TargetLanguage,

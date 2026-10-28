@@ -1,9 +1,9 @@
 package glossary
 
 import (
-	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,6 +16,7 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 type fakeStore struct {
@@ -275,13 +276,7 @@ SO15 asked DCI Carey.
 		t.Fatalf("write subtitle: %v", err)
 	}
 
-	var buf bytes.Buffer
-	encoderConfig := zapcore.EncoderConfig{MessageKey: "msg"}
-	core := zapcore.NewCore(
-		zapcore.NewConsoleEncoder(encoderConfig),
-		zapcore.AddSync(&buf),
-		zapcore.InfoLevel,
-	)
+	core, logs := observer.New(zapcore.DebugLevel)
 	previous := logger.Log
 	logger.Log = zap.New(core).Sugar()
 	t.Cleanup(func() {
@@ -314,20 +309,56 @@ SO15 asked DCI Carey.
 		t.Fatalf("prepare: %v", err)
 	}
 
-	output := buf.String()
-	for _, want := range []string{
-		"Glossary LLM generation started:",
-		"job_id=job-logs",
-		"media_key=title:series:the-capture",
-		"target_language=zh-Hans",
-		"candidates=",
-		"existing_entries=0",
-		"Glossary LLM generation completed:",
-		"entries=1",
-		"duration=",
-	} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("log output missing %q:\n%s", want, output)
+	started := logEntryForEvent(t, logs, "generation_started")
+	startedContext := started.ContextMap()
+	if startedContext["job_id"] != "job-logs" {
+		t.Fatalf("job_id = %v, want job-logs", startedContext["job_id"])
+	}
+	if startedContext["media_key"] != "title:series:the-capture" {
+		t.Fatalf("media_key = %v, want the media key", startedContext["media_key"])
+	}
+	if startedContext["target_language"] != "zh-Hans" {
+		t.Fatalf("target_language = %v, want zh-Hans", startedContext["target_language"])
+	}
+	if candidates, ok := startedContext["candidates"].(int64); !ok || candidates == 0 {
+		t.Fatalf("candidates = %v, want a positive count", startedContext["candidates"])
+	}
+	if startedContext["existing_entries"] != int64(0) {
+		t.Fatalf("existing_entries = %v, want 0", startedContext["existing_entries"])
+	}
+	if started.Level != zapcore.InfoLevel {
+		t.Fatalf("generation_started level = %v, want INFO", started.Level)
+	}
+
+	completed := logEntryForEvent(t, logs, "generation_completed")
+	completedContext := completed.ContextMap()
+	if completedContext["entries"] != int64(1) {
+		t.Fatalf("entries = %v, want 1", completedContext["entries"])
+	}
+	if _, present := completedContext["duration_ms"]; !present {
+		t.Fatal("generation_completed is missing duration_ms")
+	}
+	if completed.Level != zapcore.InfoLevel {
+		t.Fatalf("generation_completed level = %v, want INFO", completed.Level)
+	}
+
+	// Subtitle text must never reach the log.
+	for _, entry := range logs.All() {
+		for _, value := range entry.ContextMap() {
+			if strings.Contains(fmt.Sprint(value), "DCI Carey") {
+				t.Fatalf("log entry leaked subtitle text: %v", entry.ContextMap())
+			}
 		}
 	}
+}
+
+func logEntryForEvent(t *testing.T, logs *observer.ObservedLogs, event string) observer.LoggedEntry {
+	t.Helper()
+	for _, entry := range logs.All() {
+		if entry.ContextMap()["event"] == event {
+			return entry
+		}
+	}
+	t.Fatalf("no log entry for event %q", event)
+	return observer.LoggedEntry{}
 }

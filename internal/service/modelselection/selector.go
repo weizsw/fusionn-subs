@@ -6,9 +6,13 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/fusionn-subs/internal/client/openrouter"
 	"github.com/fusionn-subs/pkg/logger"
 )
+
+var log = logger.Component("model_selection")
 
 // ModelUpdateCallback is called when a new model is selected.
 type ModelUpdateCallback func(newModel string)
@@ -67,20 +71,18 @@ func NewSelector(cfg Config) (*Selector, error) {
 // Start performs initial evaluation and starts the scheduler.
 // Blocks until initial evaluation completes or times out.
 func (s *Selector) Start(ctx context.Context) error {
-	// Detect and log timezone
-	zone, offset := time.Now().Zone()
-	offsetHours := offset / 3600
-	var offsetSign string
-	if offsetHours >= 0 {
-		offsetSign = "+"
-	}
-	logger.Infof("🕐 Using timezone: %s (UTC%s%d)", zone, offsetSign, offsetHours)
-	logger.Infof("🚀 Starting model selector (daily evaluation at %02d:00 %s)", s.scheduleHour, zone)
+	zone, _ := time.Now().Zone()
+	log.Info(ctx, "selector_started", "Model selector started",
+		zap.String("timezone", zone),
+		zap.Int("schedule_hour", s.scheduleHour),
+	)
 
 	// Initial evaluation (blocking)
-	if err := s.evaluate(); err != nil {
-		logger.Errorf("❌ Initial model evaluation failed: %v", err)
-		logger.Infof("⚠️  Using configured model as fallback: %s", s.defaultModel)
+	if err := s.evaluate(ctx); err != nil {
+		log.Warn(ctx, "evaluation_failed", "Initial model evaluation failed",
+			zap.String("fallback_model", s.defaultModel),
+			zap.Error(err),
+		)
 		s.mu.Lock()
 		s.selected = s.defaultModel
 		s.lastKnown = s.defaultModel
@@ -121,8 +123,8 @@ func (s *Selector) OnModelUpdate(cb ModelUpdateCallback) {
 }
 
 // evaluate fetches models and selects the best one.
-func (s *Selector) evaluate() error {
-	logger.Infof("🔍 Fetching free models from OpenRouter...")
+func (s *Selector) evaluate(ctx context.Context) error {
+	log.Debug(ctx, "models_fetch_started", "Fetching free models")
 
 	models, err := s.openRouterClient.GetFreeModels()
 	if err != nil {
@@ -133,7 +135,7 @@ func (s *Selector) evaluate() error {
 		return fmt.Errorf("no free models available")
 	}
 
-	logger.Infof("📋 Found %d free models (evaluator will select best for translation)", len(models))
+	log.Info(ctx, "models_fetched", "Free models fetched", zap.Int("model_count", len(models)))
 
 	selected, err := s.evaluator.SelectBestModel(models)
 	if err != nil {
@@ -150,12 +152,15 @@ func (s *Selector) evaluate() error {
 
 	// Notify callbacks if model changed
 	if oldModel != selected && oldModel != "" {
-		logger.Infof("🔄 Model changed: %s → %s", oldModel, selected)
+		log.Info(ctx, "model_changed", "Model changed",
+			zap.String("from_model", oldModel),
+			zap.String("to_model", selected),
+		)
 		for _, cb := range callbacks {
 			cb(selected)
 		}
 	} else if oldModel == "" {
-		logger.Infof("🎯 Initial model selected: %s", selected)
+		log.Info(ctx, "model_selected", "Model selected", zap.String("model", selected))
 	}
 
 	return nil
@@ -179,10 +184,12 @@ func (s *Selector) runScheduler() {
 				s.mu.RUnlock()
 
 				if time.Since(lastEval) >= 23*time.Hour {
-					logger.Infof("⏰ Daily evaluation triggered")
-					if err := s.evaluate(); err != nil {
-						logger.Errorf("❌ Scheduled evaluation failed: %v", err)
-						logger.Infof("⚠️  Continuing with last known good model")
+					log.Info(context.Background(), "evaluation_triggered", "Daily evaluation triggered")
+					if err := s.evaluate(context.Background()); err != nil {
+						log.Warn(context.Background(), "evaluation_failed", "Scheduled evaluation failed",
+							zap.String("fallback_model", s.GetCurrentModel()),
+							zap.Error(err),
+						)
 					}
 				}
 			}

@@ -1,7 +1,7 @@
 package config
 
 import (
-	"bytes"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -9,6 +9,7 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/fusionn-subs/internal/util"
 	"github.com/fusionn-subs/pkg/logger"
@@ -538,22 +539,22 @@ func TestSafeLogValuesIncludesOpenAIValues(t *testing.T) {
 	}
 }
 
-func TestLogChangesMasksGlossaryLLMAPIKey(t *testing.T) {
-	const oldSecret = "old-glossary-secret"
-	const newSecret = "new-glossary-secret"
+func TestLogChangesKeepsValuesOutOfInfoAndMasksSecretsInDebug(t *testing.T) {
+	const (
+		oldSecret      = "old-glossary-secret"
+		newSecret      = "new-glossary-secret"
+		oldInstruction = "old instruction text"
+		newInstruction = "new instruction text"
+	)
 
 	oldCfg := validConfigForTest()
 	oldCfg.Glossary.LLM.APIKey = oldSecret
+	oldCfg.Gemini.Instruction = oldInstruction
 	newCfg := validConfigForTest()
 	newCfg.Glossary.LLM.APIKey = newSecret
+	newCfg.Gemini.Instruction = newInstruction
 
-	var buf bytes.Buffer
-	encoderConfig := zapcore.EncoderConfig{MessageKey: "msg"}
-	core := zapcore.NewCore(
-		zapcore.NewConsoleEncoder(encoderConfig),
-		zapcore.AddSync(&buf),
-		zapcore.InfoLevel,
-	)
+	core, logs := observer.New(zapcore.DebugLevel)
 	previous := logger.Log
 	logger.Log = zap.New(core).Sugar()
 	t.Cleanup(func() {
@@ -562,11 +563,50 @@ func TestLogChangesMasksGlossaryLLMAPIKey(t *testing.T) {
 
 	logChanges(oldCfg, newCfg, "")
 
-	output := buf.String()
-	if strings.Contains(output, oldSecret) || strings.Contains(output, newSecret) {
-		t.Fatalf("log output leaked raw secret: %s", output)
+	var infoEntries []observer.LoggedEntry
+	var debugText strings.Builder
+	for _, entry := range logs.All() {
+		switch entry.Level {
+		case zapcore.InfoLevel:
+			infoEntries = append(infoEntries, entry)
+		case zapcore.DebugLevel:
+			for _, value := range entry.ContextMap() {
+				fmt.Fprintf(&debugText, "%v\n", value)
+			}
+		default:
+			t.Fatalf("unexpected log level %v", entry.Level)
+		}
 	}
-	if !strings.Contains(output, util.MaskSecret(oldSecret)) || !strings.Contains(output, util.MaskSecret(newSecret)) {
-		t.Fatalf("log output did not include masked secrets: %s", output)
+
+	// INFO names the changed fields and must not carry values or prompt text.
+	if len(infoEntries) != 1 {
+		t.Fatalf("INFO entries = %d, want 1", len(infoEntries))
+	}
+	infoContext := infoEntries[0].ContextMap()
+	changedFields, _ := infoContext["changed_fields"].(string)
+	if !strings.Contains(changedFields, "Glossary.LLM.APIKey") {
+		t.Fatalf("changed_fields = %q, want the API key field", changedFields)
+	}
+	if !strings.Contains(changedFields, "Gemini.Instruction") {
+		t.Fatalf("changed_fields = %q, want the instruction field", changedFields)
+	}
+	for _, value := range infoContext {
+		text := fmt.Sprint(value)
+		if strings.Contains(text, oldSecret) || strings.Contains(text, newSecret) ||
+			strings.Contains(text, oldInstruction) || strings.Contains(text, newInstruction) {
+			t.Fatalf("INFO entry carries a value: %q", text)
+		}
+	}
+
+	// DEBUG shows masked secrets and omits instruction text entirely.
+	debugOutput := debugText.String()
+	if strings.Contains(debugOutput, oldSecret) || strings.Contains(debugOutput, newSecret) {
+		t.Fatalf("DEBUG output leaked a raw secret: %s", debugOutput)
+	}
+	if strings.Contains(debugOutput, oldInstruction) || strings.Contains(debugOutput, newInstruction) {
+		t.Fatalf("DEBUG output leaked instruction text: %s", debugOutput)
+	}
+	if !strings.Contains(debugOutput, util.MaskSecret(oldSecret)) || !strings.Contains(debugOutput, util.MaskSecret(newSecret)) {
+		t.Fatalf("DEBUG output did not include masked secrets: %s", debugOutput)
 	}
 }

@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 
 	"github.com/fusionn-subs/internal/client/callback"
 	"github.com/fusionn-subs/internal/config"
@@ -23,19 +25,26 @@ import (
 	"github.com/fusionn-subs/pkg/logger"
 )
 
+var (
+	log      = logger.Component("main")
+	redisLog = logger.Component("redis")
+)
+
 func main() {
 	if err := run(); err != nil && !errors.Is(err, context.Canceled) {
-		logger.Fatalf("❌ Fatal error: %v", err)
+		log.Error(context.Background(), "service_failed", "Service failed", zap.Error(err))
+		logger.Sync()
+		os.Exit(1)
 	}
 }
 
 func run() error {
-	// Initialize logger
-	isDev := os.Getenv("ENV") != "production"
-	logger.Init(isDev)
+	// Initialize the process-wide logger. LOG_LEVEL selects the level.
+	logger.Configure(logger.Config{})
 	defer logger.Sync()
 
-	version.PrintBanner(nil)
+	// Startup banner: once per start, with the level that is actually in effect.
+	version.PrintBanner(nil, logger.Log.Level().CapitalString())
 
 	// Load configuration
 	configPath := os.Getenv("CONFIG_PATH")
@@ -43,7 +52,6 @@ func run() error {
 		configPath = "config/config.yaml"
 	}
 
-	logger.Infof("📁 Loading config: %s", configPath)
 	cfgMgr, err := config.NewManager(configPath)
 	if err != nil {
 		return fmt.Errorf("config error: %w", err)
@@ -61,7 +69,10 @@ func run() error {
 	}
 	defer func() {
 		if closeErr := redisClient.Close(); closeErr != nil {
-			logger.Errorf("Redis close error: %v", closeErr)
+			log.Warn(context.Background(), "resource_close_failed", "Redis close failed",
+				zap.String("resource", "redis"),
+				zap.Error(closeErr),
+			)
 		}
 	}()
 
@@ -97,7 +108,9 @@ func run() error {
 		cfg.Callback.MaxRetries,
 		cfg.Callback.RetryBackoffSeconds,
 	)
-	logger.Infof("📤 Callback: %s (retries: %d)", cfg.Callback.URL, cfg.Callback.MaxRetries)
+	log.Debug(context.Background(), "callback_configured", "Callback configured",
+		zap.Int("max_retries", cfg.Callback.MaxRetries),
+	)
 
 	// Set default translator retry config if not provided
 	if cfg.Translator.MaxTranslationRetries == 0 {
@@ -116,16 +129,15 @@ func run() error {
 		MaxTranslationRetries: cfg.Translator.MaxTranslationRetries,
 	}, translatorSvc, glossarySvc, callbackClient)
 
-	logger.Info("")
-	logger.Info("────────────────────────────────────────────")
-	logger.Infof("✅ Ready! Listening on queue: %s", cfg.Redis.Queue)
-	logger.Info("────────────────────────────────────────────")
+	log.Info(context.Background(), "service_started", "Service started",
+		zap.String("version", version.Version),
+		zap.String("queue", cfg.Redis.Queue),
+	)
 
 	// Run worker (blocks until context canceled)
 	err = workerSvc.Run(ctx)
 
-	fmt.Println()
-	logger.Info("👋 Goodbye!")
+	log.Info(context.Background(), "service_stopped", "Service stopped")
 
 	return err
 }
@@ -141,7 +153,10 @@ func initGlossary(ctx context.Context, cfg *config.Config) (worker.GlossaryPrepa
 	}
 	cleanup := func() {
 		if closeErr := db.Close(); closeErr != nil {
-			logger.Errorf("Glossary DB close error: %v", closeErr)
+			log.Warn(context.Background(), "resource_close_failed", "Glossary DB close failed",
+				zap.String("resource", "glossary_db"),
+				zap.Error(closeErr),
+			)
 		}
 	}
 
@@ -151,7 +166,9 @@ func initGlossary(ctx context.Context, cfg *config.Config) (worker.GlossaryPrepa
 		return nil, func() {}, err
 	}
 
-	logger.Infof("📚 Glossary enabled: %s", cfg.Glossary.DBPath)
+	log.Info(context.Background(), "glossary_enabled", "Glossary enabled",
+		zap.String("db_path", cfg.Glossary.DBPath),
+	)
 	svc := glossary.NewService(glossary.ServiceConfig{
 		Enabled:                   cfg.Glossary.Enabled,
 		TargetLanguage:            cfg.Glossary.TargetLanguage,
@@ -220,7 +237,7 @@ func newGlossaryLLM(ctx context.Context, cfg *config.Config) (glossary.LLMClient
 }
 
 func initRedis(url string) (*redis.Client, error) {
-	logger.Info("🔗 Connecting to Redis...")
+	redisLog.Info(context.Background(), "redis_connecting", "Connecting to Redis")
 
 	opts, err := redis.ParseURL(url)
 	if err != nil {
@@ -238,11 +255,25 @@ func initRedis(url string) (*redis.Client, error) {
 		return nil, fmt.Errorf("redis connection failed: %w", err)
 	}
 
-	logger.Info("✅ Redis connected")
+	redisLog.Info(context.Background(), "redis_connected", "Redis connected")
 	return client, nil
 }
 
 func logConfig(cfg *config.Config) {
+	// INFO carries a short, safe summary. DEBUG carries the masked values of
+	// configuration keys, minus URLs and instruction text, which may hold
+	// credentials or prompt content.
+	attrs := []zap.Field{
+		zap.String("queue", cfg.Redis.Queue),
+		zap.String("target_language", cfg.Translator.TargetLanguage),
+		zap.Int("max_translation_retries", cfg.Translator.MaxTranslationRetries),
+		zap.Bool("glossary_enabled", cfg.Glossary.Enabled),
+	}
+	if len(cfg.Translator.Providers) > 0 {
+		attrs = append(attrs, zap.String("translator_providers", strings.Join(cfg.Translator.Providers, ",")))
+	}
+	log.Info(context.Background(), "config_effective", "Configuration effective", attrs...)
+
 	cfgValues := cfg.SafeLogValues()
 	keys := make([]string, 0, len(cfgValues))
 	for k := range cfgValues {
@@ -250,6 +281,12 @@ func logConfig(cfg *config.Config) {
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		logger.Debugf("  %s: %v", key, cfgValues[key])
+		if config.IsOpaqueLogField(key) {
+			continue
+		}
+		log.Debug(context.Background(), "config_value", "Config value",
+			zap.String("key", key),
+			zap.Any("value", cfgValues[key]),
+		)
 	}
 }

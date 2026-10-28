@@ -1,16 +1,20 @@
 package openrouter
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/go-resty/resty/v2"
+	"go.uber.org/zap"
 
 	"github.com/fusionn-subs/pkg/logger"
 )
 
 const defaultBaseURL = "https://openrouter.ai/api/v1"
+
+var log = logger.Component("openrouter")
 
 // Client interacts with OpenRouter API.
 type Client struct {
@@ -51,7 +55,10 @@ func NewClient(apiKey string) *Client {
 			}).
 			OnAfterResponse(func(c *resty.Client, r *resty.Response) error {
 				if r.Request.Attempt > 0 {
-					logger.Warnf("⚠️  OpenRouter API retry attempt #%d (status: %d)", r.Request.Attempt, r.StatusCode())
+					log.Warn(context.Background(), "api_retry", "OpenRouter API retry",
+						zap.Int("attempt_number", r.Request.Attempt),
+						zap.Int("status_code", r.StatusCode()),
+					)
 				}
 				return nil
 			}),
@@ -78,7 +85,8 @@ func (c *Client) GetFreeModels() ([]Model, error) {
 	}
 
 	if !resp.IsSuccess() {
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode(), resp.String())
+		// Provider error bodies are not replayed; the status is the reason.
+		return nil, fmt.Errorf("API error %d", resp.StatusCode())
 	}
 
 	// Filter for free models only (let evaluator decide on suitability)

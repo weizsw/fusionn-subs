@@ -9,8 +9,9 @@ import (
 	"strings"
 	"sync"
 
+	"go.uber.org/zap"
+
 	"github.com/fusionn-subs/internal/config"
-	"github.com/fusionn-subs/pkg/logger"
 )
 
 // OpenRouterTranslator implements translation using OpenRouter API via llm-subtrans.sh
@@ -65,7 +66,10 @@ func (t *OpenRouterTranslator) UpdateModel(newModel string) {
 	t.mu.Unlock()
 
 	if oldModel != newModel {
-		logger.Infof("🔄 Translator model updated: %s → %s", oldModel, newModel)
+		log.Info(context.Background(), "model_updated", "Translator model updated",
+			zap.String("from_model", oldModel),
+			zap.String("to_model", newModel),
+		)
 	}
 }
 
@@ -79,6 +83,7 @@ func (t *OpenRouterTranslator) GetModel() string {
 // Translate translates subtitles using OpenRouter
 func (t *OpenRouterTranslator) Translate(ctx context.Context, req Request) (string, error) {
 	msg := req.Job
+	ctx = withJobID(ctx, msg.JobID)
 	if err := msg.Validate(); err != nil {
 		return "", fmt.Errorf("invalid message: %w", err)
 	}
@@ -103,12 +108,14 @@ func (t *OpenRouterTranslator) Translate(ctx context.Context, req Request) (stri
 	// Pass API key via environment (security: not visible in process list)
 	cmd.Env = append(os.Environ(), "OPENROUTER_API_KEY="+t.apiKey, "PYTHONUNBUFFERED=1")
 
-	logger.Infof("🔄 Starting translation (OpenRouter): %s → %s", msg.SubtitlePath, outputPath)
-	logger.Infof("📦 Model: %s", currentModel)
-	logger.Debugf("Command: %s", maskAPIKeyInCommand(buildCommandLine(t.scriptPath, args)))
+	logToolStarted(ctx, toolLLMSubtrans, msg, outputPath, zap.String("model", currentModel))
+	logToolCommand(ctx, toolLLMSubtrans, t.scriptPath, args)
 
-	resultPath, _, err := executeScript(cmd, outputPath)
-	return resultPath, err
+	result, err := executeScript(ctx, toolLLMSubtrans, cmd, outputPath)
+	if err != nil {
+		return "", err
+	}
+	return result.Path, nil
 }
 
 func (t *OpenRouterTranslator) buildArgs(req Request, outputPath, currentModel string) []string {
