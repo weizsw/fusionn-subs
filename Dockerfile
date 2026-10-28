@@ -29,7 +29,11 @@ RUN echo "Fetching llm-subtrans for fusionn-subs ${VERSION}" && git clone --dept
 
 WORKDIR ${LLM_SUBTRANS_DIR}
 
-RUN set -e; printf "2\n\na\n\n\n\n\n\n" | ./install.sh
+# Answer the installer's prompts in order: install type 2 (command line tools),
+# no OpenRouter key, provider set a (all except Bedrock), one empty API key per
+# selected provider (Gemini, OpenAI, Claude, DeepSeek, Mistral), and n to skip
+# local transcription. The installer aborts on EOF, so every prompt needs a line.
+RUN set -e; printf "2\n\na\n\n\n\n\n\nn\n" | ./install.sh
 
 RUN test -x "${LLM_SUBTRANS_SCRIPT_PATH}" && test -x "${GEMINI_SCRIPT_PATH}" && test -x "${OPENAI_SCRIPT_PATH}"
 

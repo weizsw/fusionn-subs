@@ -4,12 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"slices"
 	"strings"
-	"sync"
+	"syscall"
 	"time"
 
 	"go.uber.org/zap"
@@ -160,6 +159,10 @@ func maskSecrets(s string, secrets []string, cut bool) string {
 // retained diagnostic copy is bounded.
 const scriptTailLimit = 4 * 1024
 
+// scriptWaitDelay bounds how long Wait waits once the context ends or the
+// process is gone, so a descriptor inherited by a survivor cannot hold the job.
+const scriptWaitDelay = 2 * time.Second
+
 // scriptMatchOverlap keeps the tail of the previous chunk so an indicator is
 // still found when it is split across two reads.
 const scriptMatchOverlap = 64
@@ -266,37 +269,45 @@ func (r scriptResult) failureReason() string {
 // forwarding raw tool text. Diagnostics stay in the returned result so the
 // caller decides what to log.
 func executeScript(ctx context.Context, tool string, cmd *exec.Cmd, outputPath string) (scriptResult, error) {
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return scriptResult{}, fmt.Errorf("stdout pipe: %w", err)
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return scriptResult{}, fmt.Errorf("stderr pipe: %w", err)
-	}
-
 	stdout := &scriptStream{}
 	stderr := &scriptStream{}
 	secrets := commandSecrets(cmd)
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		_, _ = io.Copy(stdout, stdoutPipe)
-	}()
-	go func() {
-		defer wg.Done()
-		_, _ = io.Copy(stderr, stderrPipe)
-	}()
+	// os/exec owns the pipes: it drains these writers before Wait returns and
+	// bounds the drain with WaitDelay, so the bounded tail and the sticky
+	// failure and rate-limit markers of scriptStream stay as they are.
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+
+	// The tool runs in its own process group and canceling the context kills
+	// the whole group. os/exec only kills the process it started, and a shell
+	// that forked the tool (Linux /bin/sh does for `sh -c "sleep 5"`) would
+	// otherwise survive as a child holding the pipes, so the drain would keep
+	// waiting for it.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// WaitDelay only bounds the extreme case of a survivor that inherited the
+	// descriptors; the group kill below is what stops the tree.
+	cmd.WaitDelay = scriptWaitDelay
+	// A command built by exec.CommandContext already carries a Cancel function;
+	// replace it so the whole group stops. A command built by exec.Command has
+	// no Cancel and keeps its current semantics: it does not die with ctx.
+	if cmd.Cancel != nil {
+		cmd.Cancel = func() error {
+			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			if errors.Is(err, syscall.ESRCH) {
+				// The group is already gone. Report it the way os.Process.Kill
+				// does, so os/exec does not add a spurious cancel error.
+				return os.ErrProcessDone
+			}
+			return err
+		}
+	}
 
 	started := time.Now()
 	if err := cmd.Start(); err != nil {
 		return scriptResult{}, fmt.Errorf("start script: %w", err)
 	}
 
-	// Drain before Wait: Wait closes the pipes.
-	wg.Wait()
 	runErr := cmd.Wait()
 
 	result := scriptResult{
