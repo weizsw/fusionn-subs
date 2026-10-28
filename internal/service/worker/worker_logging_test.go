@@ -381,7 +381,7 @@ func TestSampleLogLines(t *testing.T) {
 	})
 
 	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
-	prefix := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+08:00 (DEBUG|INFO|WARN|ERROR) service=fusionn-subs component=\S+ event=\S+ `)
+	prefix := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+08:00 (DEBUG|INFO|WARN|ERROR) component=\S+ event=\S+ `)
 	for _, line := range lines {
 		if !prefix.MatchString(line) {
 			t.Fatalf("unexpected log line: %s", line)
