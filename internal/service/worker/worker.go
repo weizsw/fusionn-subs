@@ -26,6 +26,14 @@ const (
 
 	// Delay between translation attempts when the queue config does not set one
 	defaultTranslationRetryDelay = 2 * time.Second
+
+	// deadLetterSuffix names the list, next to the queue, that keeps messages
+	// whose job panicked, for inspection and replay.
+	deadLetterSuffix = ":dead"
+
+	// deadLetterTimeout bounds the dead-letter write, which must not depend on
+	// the job's own cancellation.
+	deadLetterTimeout = 5 * time.Second
 )
 
 type Config struct {
@@ -44,8 +52,14 @@ type GlossaryPreparer interface {
 	Prepare(ctx context.Context, msg types.JobMessage) (GlossaryPayload, error)
 }
 
+// queueStore is the part of the Redis client the worker uses.
+type queueStore interface {
+	BRPop(ctx context.Context, timeout time.Duration, keys ...string) *redis.StringSliceCmd
+	LPush(ctx context.Context, key string, values ...interface{}) *redis.IntCmd
+}
+
 type Worker struct {
-	redis      *redis.Client
+	redis      queueStore
 	cfg        Config
 	translator translator.Translator
 	glossary   GlossaryPreparer
@@ -117,12 +131,15 @@ func (w *Worker) processNext(ctx context.Context) error {
 		return nil // Bad message, don't retry
 	}
 
-	w.handleMessage(ctx, msg)
+	if w.handleMessage(ctx, msg) {
+		w.deadLetter(logger.WithJobID(ctx, msg.JobID), rawMsg)
+	}
 	return nil
 }
 
-// handleMessage runs one job and records its single boundary failure event.
-func (w *Worker) handleMessage(ctx context.Context, msg types.JobMessage) {
+// handleMessage runs one job and records its single boundary failure event. It
+// reports whether the job panicked, so the caller can keep the message.
+func (w *Worker) handleMessage(ctx context.Context, msg types.JobMessage) (panicked bool) {
 	ctx = logger.WithJobID(ctx, msg.JobID)
 
 	log.Info(ctx, "job_received", "Job received",
@@ -136,14 +153,40 @@ func (w *Worker) handleMessage(ctx context.Context, msg types.JobMessage) {
 			zap.String("stage", jobStage(err)),
 			logger.DurMs(time.Since(started)),
 			zap.Error(err),
+			logger.PanicStack(err),
 		)
-		// Note: Message is already consumed. Consider implementing:
-		// - Dead letter queue for failed jobs
-		// - Retry with LPUSH back to queue
+		// Note: Message is already consumed. Only a panicked job is
+		// dead-lettered; other failures are not retried or kept.
+		var pe *logger.PanicError
+		return errors.As(err, &pe)
 	}
+	return false
 }
 
-func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
+// deadLetter keeps the original message of a panicked job next to the queue,
+// so it can be inspected and replayed after a fix instead of being lost.
+func (w *Worker) deadLetter(ctx context.Context, raw string) {
+	key := w.cfg.Queue + deadLetterSuffix
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deadLetterTimeout)
+	defer cancel()
+	if err := w.redis.LPush(writeCtx, key, raw).Err(); err != nil {
+		log.Error(ctx, "dead_letter_failed", "Message could not be dead-lettered",
+			zap.String("queue", key), zap.Error(err))
+		return
+	}
+	log.Warn(ctx, "job_dead_lettered", "Message kept for replay", zap.String("queue", key))
+}
+
+func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) (err error) {
+	// A panic fails this job like any other error instead of ending the
+	// process, which would also lose the consumed message.
+	stage := "translation"
+	defer func() {
+		if r := recover(); r != nil {
+			err = &stageError{stage: stage, err: logger.Recovered(r)}
+		}
+	}()
+
 	chsPath, err := w.translateJob(ctx, msg)
 	if err != nil {
 		return &stageError{stage: "translation", err: err}
@@ -156,6 +199,7 @@ func (w *Worker) processJob(ctx context.Context, msg types.JobMessage) error {
 		ChsSubtitlePath: chsPath,
 	}
 
+	stage = "callback"
 	if err := w.callback.Send(ctx, payload); err != nil {
 		return &stageError{stage: "callback", err: err}
 	}

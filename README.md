@@ -411,6 +411,13 @@ fusionn-subs expects jobs in this format:
 - Configurable via `callback.max_retries` and `callback.retry_backoff_seconds`
 - Stops retrying on 4xx errors (client errors)
 - Continues retrying on 5xx errors (server errors) and network failures
+- Every attempt sends the same `X-Request-ID` header. fusionn logs the same ID, so the log lines of the two services match.
+
+**Panics:**
+- A panic in a job does not stop the worker. The job fails, and its `job_failed` line includes the stack.
+- The worker keeps the original message in the list `<queue>:dead`, for example `translate_queue:dead`. Other failures do not go to this list.
+- To see the kept messages: `redis-cli LRANGE translate_queue:dead 0 -1`
+- To send the oldest kept message back to the queue after a fix: `redis-cli RPOPLPUSH translate_queue:dead translate_queue`
 
 ### Rate Limiting
 

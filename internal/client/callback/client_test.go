@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -135,5 +136,42 @@ func TestSendDoesNotRetryOnClientError(t *testing.T) {
 	}
 	if got := len(entriesForEvent(logs, "callback_retry")); got != 0 {
 		t.Fatalf("callback_retry entries = %d, want 0 for a 4xx response", got)
+	}
+}
+
+// Every attempt of one callback carries the same X-Request-ID, and the events
+// carry it too. Fusionn reuses a valid incoming ID, so both sides log one value.
+func TestSendCarriesOneRequestIDAcrossAttempts(t *testing.T) {
+	var mu sync.Mutex
+	var seen []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.Header.Get("X-Request-ID"))
+		first := len(seen) == 1
+		mu.Unlock()
+		if first {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	logs := newLogSink(t)
+	client := NewClient(server.URL, time.Second, 1, []int{0})
+	if err := client.Send(context.Background(), Payload{JobID: "job-1"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 2 || !logger.ValidRequestID(seen[0]) || seen[1] != seen[0] {
+		t.Fatalf("X-Request-ID per attempt = %q, want one valid ID on both", seen)
+	}
+	for _, event := range []string{"callback_retry", "callback_delivered"} {
+		entries := entriesForEvent(logs, event)
+		if len(entries) != 1 || entries[0].ContextMap()["request_id"] != seen[0] {
+			t.Errorf("%s entries = %v, want request_id %s", event, entries, seen[0])
+		}
 	}
 }

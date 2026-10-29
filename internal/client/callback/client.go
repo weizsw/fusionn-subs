@@ -45,7 +45,10 @@ func NewClient(url string, timeout time.Duration, maxRetries int, retryBackoffSe
 }
 
 func (c *Client) Send(ctx context.Context, payload Payload) error {
-	ctx = logger.WithJobID(ctx, payload.JobID)
+	// One request ID covers every attempt of this callback. Fusionn reuses a
+	// valid incoming ID, so both services log the same value for it.
+	requestID := logger.NewRequestID()
+	ctx = logger.WithRequestID(logger.WithJobID(ctx, payload.JobID), requestID)
 
 	var lastErr error
 
@@ -75,6 +78,7 @@ func (c *Client) Send(ctx context.Context, payload Payload) error {
 		resp, err := c.http.R().
 			SetContext(ctx).
 			SetHeader("Content-Type", "application/json").
+			SetHeader("X-Request-ID", requestID).
 			SetBody(payload).
 			Post(c.url)
 		if err != nil {
