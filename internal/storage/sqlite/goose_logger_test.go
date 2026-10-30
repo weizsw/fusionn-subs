@@ -18,7 +18,7 @@ import (
 	"github.com/fusionn-subs/pkg/logger"
 )
 
-var unifiedLineRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}\+08:00 `)
+var unifiedLineRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3} `)
 
 // captureUnifiedLog redirects the process-wide logger into a buffer for the
 // test and pins LOG_LEVEL so a developer environment cannot change the result.
