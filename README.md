@@ -161,6 +161,8 @@ services:
 
 Default behavior: Uses system timezone if `TZ` is not set.
 
+Log timestamps also use `TZ`. When `TZ` is not set, they use `Asia/Shanghai`, not the system time zone.
+
 **How Auto-Selection Works:**
 
 1. Daily at scheduled hour, fetch all free models from OpenRouter
@@ -319,7 +321,7 @@ services:
 Each event is one line:
 
 ```text
-2026-07-01T14:20:03.456+08:00 WARN component=translator event=translation_retry job_id=abc retry=1 retry_after_ms=2000 error="provider timeout" msg="Translation will retry"
+2026-07-01T14:20:03.456 WARN component=translator event=translation_retry job_id=abc retry=1 retry_after_ms=2000 error="provider timeout" msg="Translation will retry"
 ```
 
 The service writes the lines to standard output. Docker collects them with the `json-file` driver. The Compose file sets `max-size` to `20m` and `max-file` to `6`, so each container keeps six files of 20 MB or less.
