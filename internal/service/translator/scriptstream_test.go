@@ -560,8 +560,16 @@ exit 1
 				if !strings.Contains(logged, "***") {
 					t.Fatalf("DEBUG logs carry no masked excerpt: %s", logged)
 				}
-			default:
+			case "ERROR":
 				if logs.Len() != 0 {
+					t.Fatalf("%s logged %q; check any new event for raw output", level, logged)
+				}
+			default:
+				// INFO and WARN show only the failure line. Its detail is the
+				// error line, never the lines that carry the key.
+				lines := strings.Split(strings.TrimSpace(logged), "\n")
+				if len(lines) != 1 || !strings.Contains(lines[0], "WARN component=translator event=tool_completed tool=probe-tool ") ||
+					!strings.Contains(lines[0], ` detail="TranslationImpossibleError: boom" `) {
 					t.Fatalf("%s logged %q; check any new event for raw output", level, logged)
 				}
 			}
@@ -657,5 +665,56 @@ func TestCommandSecretsAndMasking(t *testing.T) {
 	// masked in full, never rendered.
 	if got := maskSecrets("filler abc filler", []string{"abc"}, false); strings.Contains(got, "abc") {
 		t.Fatalf("short credential leaked: %q", got)
+	}
+}
+
+// A failed run logs one WARN at the tool boundary. Its detail holds the error
+// lines of the output, so the cause shows without DEBUG.
+func TestExecuteScriptFailureWarnsWithErrorDetail(t *testing.T) {
+	logs := captureLogs(t, "INFO")
+	out := filepath.Join(t.TempDir(), "out.srt")
+	_, err := runScript(t, "echo 'Translating batch 3' >&2; echo 'openai.APIConnectionError: Connection error.' >&2; exit 1", out)
+	if err == nil {
+		t.Fatal("expected the script failure")
+	}
+	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], "WARN component=translator event=tool_completed tool=test-tool ") {
+		t.Fatalf("want one tool failure line, got %q", lines)
+	}
+	for _, want := range []string{` detail="openai.APIConnectionError: Connection error." `, " exit_code=1 ", ` error="script failed`} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("failure line lacks %q: %s", want, lines[0])
+		}
+	}
+	if strings.Contains(lines[0], "Translating batch") {
+		t.Errorf("non-error output reached the WARN line: %s", lines[0])
+	}
+}
+
+// A run stopped by its timeout says so, instead of only "signal: killed".
+func TestExecuteScriptReportsTimeout(t *testing.T) {
+	captureLogs(t, "ERROR")
+	out := filepath.Join(t.TempDir(), "out.srt")
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	_, err := executeScript(ctx, "test-tool", exec.CommandContext(ctx, "/bin/sh", "-c", "sleep 5"), out)
+	if err == nil || !strings.HasPrefix(err.Error(), "script timed out after ") {
+		t.Fatalf("error = %v, want a timeout", err)
+	}
+}
+
+// A run killed by a signal before its timeout, for example by the
+// out-of-memory killer, is not reported as a timeout.
+func TestExecuteScriptReportsASignalBeforeTheTimeout(t *testing.T) {
+	captureLogs(t, "ERROR")
+	out := filepath.Join(t.TempDir(), "out.srt")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	_, err := executeScript(ctx, "test-tool", exec.CommandContext(ctx, "/bin/sh", "-c", "kill -9 $$"), out)
+	want := "script stopped by a signal before its timeout, possibly out of memory: signal: killed"
+	if err == nil || err.Error() != want {
+		t.Fatalf("error = %v, want %q", err, want)
 	}
 }

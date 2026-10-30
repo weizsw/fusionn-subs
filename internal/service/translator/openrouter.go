@@ -111,7 +111,7 @@ func (t *OpenRouterTranslator) Translate(ctx context.Context, req Request) (stri
 	logToolStarted(ctx, toolLLMSubtrans, msg, outputPath, zap.String("model", currentModel))
 	logToolCommand(ctx, toolLLMSubtrans, t.scriptPath, args)
 
-	result, err := executeScript(ctx, toolLLMSubtrans, cmd, outputPath)
+	result, err := executeScript(ctxTimeout, toolLLMSubtrans, cmd, outputPath)
 	if err != nil {
 		return "", err
 	}

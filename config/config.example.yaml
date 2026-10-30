@@ -11,6 +11,14 @@
 #     OpenRouter and OpenAI are optional. Local LLM can be used with any OpenAI-compatible server.
 
 # ─────────────────────────────────────────────────────────────────────────────
+# LOGGING
+# ─────────────────────────────────────────────────────────────────────────────
+# DEBUG, INFO, WARN or ERROR. It overrides LOG_LEVEL and takes effect within
+# 10 seconds of saving this file, without a restart. Leave it empty to use
+# LOG_LEVEL (default INFO).
+log_level: ""
+
+# ─────────────────────────────────────────────────────────────────────────────
 # REDIS - Message queue for translation jobs
 # ─────────────────────────────────────────────────────────────────────────────
 redis:

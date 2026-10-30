@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -608,5 +610,36 @@ func TestLogChangesKeepsValuesOutOfInfoAndMasksSecretsInDebug(t *testing.T) {
 	}
 	if !strings.Contains(debugOutput, util.MaskSecret(oldSecret)) || !strings.Contains(debugOutput, util.MaskSecret(newSecret)) {
 		t.Fatalf("DEBUG output did not include masked secrets: %s", debugOutput)
+	}
+}
+
+// log_level is read from the file; logger.SetConfigLevel validates and applies it.
+func TestLogLevelIsLoaded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := `log_level: debug
+redis:
+  url: "redis://localhost:6379"
+  queue: "translate_queue"
+callback:
+  url: "http://localhost/callback"
+gemini:
+  api_key: "gemini-key"
+  primary_model:
+    name: "gemini-2.5-flash"
+  secondary_model:
+    name: "gemini-2.5-pro"
+translator:
+  target_language: "Chinese"
+  output_suffix: "chs"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LogLevel != "debug" {
+		t.Errorf("LogLevel = %q, want debug", cfg.LogLevel)
 	}
 }

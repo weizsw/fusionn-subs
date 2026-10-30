@@ -113,7 +113,7 @@ func (t *OpenAITranslator) Translate(ctx context.Context, req Request) (string, 
 		logToolStarted(ctx, toolGPTSubtrans, msg, outputPath, zap.String("model", model))
 		logToolCommand(ctx, toolGPTSubtrans, t.scriptPath, args)
 
-		result, err := executeScript(ctx, toolGPTSubtrans, cmd, outputPath)
+		result, err := executeScript(ctxTimeout, toolGPTSubtrans, cmd, outputPath)
 		cancel()
 		if err == nil {
 			return result.Path, nil

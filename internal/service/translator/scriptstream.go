@@ -327,8 +327,9 @@ func executeScript(ctx context.Context, tool string, cmd *exec.Cmd, outputPath s
 	result.RateLimited = result.RateLimited || stderr.rateLimited
 
 	if result.Failure != "" {
-		logToolFailureOutput(ctx, tool, result, secrets)
-		return result, fmt.Errorf("script reported failure: %s", result.Failure)
+		err := fmt.Errorf("script reported failure: %s", result.Failure)
+		logToolFailed(ctx, tool, result, err, secrets)
+		return result, err
 	}
 
 	if runErr != nil {
@@ -348,16 +349,15 @@ func executeScript(ctx context.Context, tool string, cmd *exec.Cmd, outputPath s
 			logToolFailureOutput(ctx, tool, result, secrets)
 			return result, nil
 		}
-		logToolFailureOutput(ctx, tool, result, secrets)
-		if reason := result.failureReason(); reason != "" {
-			return result, fmt.Errorf("script failed (exit %d): %s", result.ExitCode, reason)
-		}
-		return result, fmt.Errorf("script failed: %w", runErr)
+		err := scriptRunError(ctx, result, runErr)
+		logToolFailed(ctx, tool, result, err, secrets)
+		return result, err
 	}
 
 	if _, statErr := os.Stat(outputPath); statErr != nil {
-		logToolFailureOutput(ctx, tool, result, secrets)
-		return result, fmt.Errorf("output not found: %w", statErr)
+		err := fmt.Errorf("output not found: %w", statErr)
+		logToolFailed(ctx, tool, result, err, secrets)
+		return result, err
 	}
 
 	result.Path = outputPath
@@ -368,6 +368,46 @@ func executeScript(ctx context.Context, tool string, cmd *exec.Cmd, outputPath s
 		zap.String("output_path", outputPath),
 	)
 	return result, nil
+}
+
+// scriptRunError describes a run that exited with an error. ctx must be the
+// context that bounds the command: a run that ctx stopped says whether its
+// timeout expired or it was canceled. A run killed by a signal before that
+// points at the system, often the out-of-memory killer, not at the script.
+func scriptRunError(ctx context.Context, result scriptResult, runErr error) error {
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return fmt.Errorf("script timed out after %s: %w", result.Duration.Round(time.Second), runErr)
+	case ctx.Err() != nil:
+		return fmt.Errorf("script canceled: %w", runErr)
+	}
+	if reason := result.failureReason(); reason != "" {
+		return fmt.Errorf("script failed (exit %d): %s", result.ExitCode, reason)
+	}
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+			return fmt.Errorf("script stopped by a signal before its timeout, possibly out of memory: %w", runErr)
+		}
+	}
+	return fmt.Errorf("script failed: %w", runErr)
+}
+
+// logToolFailed records a failed run once at the tool boundary: a WARN whose
+// detail holds the error lines of the output, so the cause shows without
+// DEBUG, then the masked output tail as a DEBUG preview.
+func logToolFailed(ctx context.Context, tool string, result scriptResult, err error, secrets []string) {
+	stdout := maskSecrets(result.StdoutTail, secrets, result.StdoutBytes > int64(len(result.StdoutTail)))
+	stderr := maskSecrets(result.StderrTail, secrets, result.StderrBytes > int64(len(result.StderrTail)))
+	log.Warn(ctx, "tool_completed", "Tool failed",
+		zap.String("tool", tool),
+		zap.Int("exit_code", result.ExitCode),
+		logger.DurMs(result.Duration),
+		zap.Error(err),
+		// stderr comes last because FailureDetail keeps the newest error lines.
+		logger.FailureDetail(stdout+"\n"+stderr, secrets...),
+	)
+	logToolFailureOutput(ctx, tool, result, secrets)
 }
 
 func scriptExitCode(err error) int {
