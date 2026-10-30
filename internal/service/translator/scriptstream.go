@@ -58,7 +58,7 @@ func logToolCommand(ctx context.Context, tool, scriptPath string, args []string)
 		}
 		safe = append(safe, arg)
 	}
-	log.Debug(ctx, "tool_command", "Tool command",
+	log.Debug(ctx, "tool_invocation", "Tool invocation",
 		zap.String("tool", tool),
 		logger.Preview(maskAPIKeyInCommand(buildCommandLine(scriptPath, safe))),
 	)

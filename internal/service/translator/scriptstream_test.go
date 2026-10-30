@@ -473,6 +473,10 @@ func TestLogToolCommandMasksContentArguments(t *testing.T) {
 	})
 
 	output := buf.String()
+	// The event name matches the command line event of the other services.
+	if !strings.Contains(output, "DEBUG component=translator event=tool_invocation job_id=job-1 tool=llm-subtrans ") {
+		t.Fatalf("no tool_invocation line: %s", output)
+	}
 	for _, leaked := range []string{"sk-secret-key", "sk-s", "sk-equals-secret", "Never translate the names.", "SO15::SO15", "The Capture"} {
 		if strings.Contains(output, leaked) {
 			t.Fatalf("command preview leaked %q: %s", leaked, output)
