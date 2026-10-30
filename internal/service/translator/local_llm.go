@@ -125,7 +125,7 @@ func (t *LocalLLMTranslator) Translate(ctx context.Context, req Request) (string
 	logToolStarted(ctx, toolLLMSubtrans, msg, outputPath, zap.String("model", snapshot.model))
 	logToolCommand(ctx, toolLLMSubtrans, t.scriptPath, args)
 
-	result, err := executeScript(ctx, toolLLMSubtrans, cmd, outputPath)
+	result, err := executeScript(ctxTimeout, toolLLMSubtrans, cmd, outputPath)
 	if err != nil {
 		os.Remove(outputPath)
 		return "", err

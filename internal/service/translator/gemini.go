@@ -102,7 +102,7 @@ func (t *GeminiTranslator) Translate(ctx context.Context, req Request) (string, 
 	logToolStarted(ctx, toolGeminiSubtrans, msg, outputPath, zap.String("model", model.Name))
 	logToolCommand(ctx, toolGeminiSubtrans, t.scriptPath, args)
 
-	result, err := executeScript(ctx, toolGeminiSubtrans, cmd, outputPath)
+	result, err := executeScript(ctxTimeout, toolGeminiSubtrans, cmd, outputPath)
 	if err != nil {
 		os.Remove(outputPath)
 

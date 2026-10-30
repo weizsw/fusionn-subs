@@ -326,7 +326,9 @@ The service writes the lines to standard output. Docker collects them with the `
 
 `LOG_LEVEL` sets the log level. The values are `DEBUG`, `INFO`, `WARN` (`WARNING` is accepted as an alias), and `ERROR`. The output always shows `WARN`. The default is `INFO`. If the value is not valid, the service keeps `INFO` and writes one `config_invalid` warning at startup.
 
-INFO shows the lifecycle of each job, for example the start, the retries, and the final result. DEBUG adds controlled details, for example the masked tool command and one short preview of the tool output. The preview is capped at 512 characters. API keys, tokens, and passwords are masked at all levels.
+The config key `log_level` takes the same values and overrides `LOG_LEVEL` without a restart. The service checks the config file every 10 seconds, applies a new level to the whole process, and writes one `log_level_changed` event. An empty value returns to `LOG_LEVEL`. An invalid value keeps the current level and writes one `config_invalid` warning.
+
+INFO shows the lifecycle of each job, for example the start, the retries, and the final result. DEBUG adds controlled details, for example the masked tool command and one short preview of the tool output. The preview is capped at 512 characters. When a translation tool fails, its `tool_completed` WARN line also carries `detail`: up to three lines of the tool output that look like error messages, capped at 300 characters, so the cause shows without DEBUG. A run that its timeout stopped fails with `script timed out after <duration>`. A run that a signal stopped earlier fails with `script stopped by a signal before its timeout, possibly out of memory`. API keys, tokens, and passwords are masked at all levels.
 
 Read the logs with `make docker-logs` or from the container page in OrbStack.
 

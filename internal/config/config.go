@@ -37,6 +37,8 @@ const (
 )
 
 type Config struct {
+	// LogLevel overrides LOG_LEVEL at run time; see logger.SetConfigLevel.
+	LogLevel   string           `mapstructure:"log_level"`
 	Redis      RedisConfig      `mapstructure:"redis"`
 	Callback   CallbackConfig   `mapstructure:"callback"`
 	Gemini     GeminiConfig     `mapstructure:"gemini"`

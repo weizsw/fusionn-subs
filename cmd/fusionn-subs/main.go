@@ -58,6 +58,8 @@ func run() error {
 	}
 	defer cfgMgr.Stop()
 	cfg := cfgMgr.Get()
+	logger.SetConfigLevel(cfg.LogLevel)
+	cfgMgr.OnChange(func(_, updated *config.Config) { logger.SetConfigLevel(updated.LogLevel) })
 
 	// Log config values (masked)
 	logConfig(cfg)
